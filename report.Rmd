@@ -1,0 +1,195 @@
+---
+title: "MovieLens Project Report"
+author: "William Fang"
+date: "29/04/2020"
+output:
+  pdf_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE)
+```
+
+# Introduction
+
+The goal of this project is to create a movie recommendation system using the MovieLens dataset. Using ideas introduced in **PH125.8x: Data Science: Machine Learning**, the aim is to develop a ML algorithm on one subset of data, and use it to predict movie ratings against a validation set.
+
+```{r data-setup, cache = TRUE}
+################################
+# Create edx set, validation set
+################################
+
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+
+# MovieLens 10M dataset:
+ # https://grouplens.org/datasets/movielens/10m/
+ # http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+ download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+ colnames(movies) <- c("movieId", "title", "genres")
+ movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                            title = as.character(title),
+                                            genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+ edx <- movielens[-test_index,]
+ temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+      semi_join(edx, by = "movieId") %>%
+      semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+```
+The dataset is the 10M version of the MovieLens dataset (See @@), with the following structure:
+
+```{r required-packages}
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(caret)
+#if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+#library(kableExtra)
+```
+```{r data-structure, include = TRUE, comment = NA}
+#kable(head(edx %>% as_tibble()), caption = "Data Structure")
+str(edx, width = 90, strict.width = "cut")
+```
+
+Each row is a single rating of a movie by a user.
+
+* Key steps performed
+
+# Analysis
+
+In **PH125.8x: Data Science: Machine Learning**, the following models were explored:
+
+*  $Y_{u,i} = \mu + \varepsilon_{u,i}$ Predict rating of movie $i$ by user $u$ as mean of all ratings. $\epsilon_{u,i}$ represents independent errors sampled from the same distribution centered at 0.
+*  $Y_{u,i} = \mu + b_{i} + \varepsilon_{u,i}$ As above, but with a bias added for movie $i$.
+*  $Y_{u,i} = \mu + b_{i} + b_{u} + \varepsilon_{u,i}$ As above, but with a bias added for user $u$.
+*  $Y_{u,i} = \mu + b_{i}(\lambda) + \varepsilon_{u,i}$ Regularised movie effect model.
+*  $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \varepsilon_{u,i}$ Regularised movie and user effect model.
+
+In developing and exploring the prediction models, the `edx` data set is split into training and test sets (`train_set` and `test_set` respectively). The validation set is only used when computing the final accuracy and isn't used as part of development.
+
+```{r create-test-train-sets}
+# Split following the same method as used for creating edx and validation sets.
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+train_set <- edx[-test_index,]
+temp <- edx[test_index,]
+
+# Make sure userId and movieId in test set are also in train set
+test_set <- temp %>% 
+  semi_join(train_set, by = "movieId") %>%
+  semi_join(train_set, by = "userId")
+
+# Add rows removed from test set back into edx set
+removed <- anti_join(temp, train_set)
+train_set <- rbind(edx, removed)
+rm(test_index, temp, removed)
+```
+
+```{r course-models}
+# Root mean square error calculation function.
+RMSE <- function(true_ratings, predicted_ratings){
+    sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+
+# Naive model based on mean of all ratings.
+mu <- mean(train_set$rating)
+
+# RMSE using naive model.
+rmse_naive <- RMSE(test_set$rating, mu)
+
+# Build up table of RMSE results.
+rmse_results <- tibble(method = "Just the average", RMSE = rmse_naive)
+
+# Movie effects model.
+
+```
+The results of training and evaluating the models:
+```{r course-results, include = TRUE}
+kable(rmse_results)
+```
+
+From the data, there are 3 elements that are yet to be incorporated into any of these models, movie title, timestamp of the rating, and movie genres.
+
+## Movie Title
+
+It is not obvious that there would be any predictive power in the title of a movie, distinct from that of the movie effects value $b_i$.
+
+## Timestamp
+
+In the course exercises we were asked to plot the average rating per week. 
+
+```{r avg-rating-per-week-plot, echo = FALSE}
+edx %>%
+  mutate(date = as_datetime(timestamp)) %>%
+  mutate(date = round_date(date, unit = "week")) %>%
+  group_by(date) %>%
+  summarize(rating = mean(rating)) %>%
+  ggplot(aes(date, rating)) +
+  geom_point() +
+  geom_smooth()
+```
+The plot shows that there is slight variation of the average rating over time, so there may be an increase in prediction accuracy if we add another term to the prediction model that accounts for this. The formula is (as per the course exercise) $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \varepsilon_{u,i}$
+
+# Results
+
+# Conclusion
+
+# Appendix
+## Generation of Training and Validation Sets
+```{r data-generation-code, eval = FALSE} 
+```
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r include = FALSE}
+##```{r load-kableExtra, include = FALSE}
+##if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+##library(kableExtra)
+##```
+##```{r course-models, echo = FALSE}
+##df <- data.frame(
+##  Formula=c("$Y_{u,i} = \\mu + \\varepsilon_{u,i}$"),
+##  Description=c("Rating by user $u$ for movie $i$ is the mean of all movie ratings."))
+###kable(df, format = "latex")
+##kable(df)
+##rm(df)
+##```
+##```{r unload-kableExtra, include = FALSE}
+### kableExtra hides some dplr functions, so unload it.
+##detach("package:kableExtra", unload=TRUE)
+##```
+##The $\epsilon_{u,1}$ term represents independent errors sampled from the same distribution centered at zero.
+```
