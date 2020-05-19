@@ -149,3 +149,32 @@ small_movie %>% filter(movieId == 296) %>%
 small_movie %>% filter(movieId == 296) %>% .$rating %>% RMSE(knn_predict)
 
 # Dimension reduction, turn the edx into matrix, and 
+
+edx %>% mutate(date = as_datetime(timestamp)) %>%
+  mutate(date = round_date(date, unit = "week")) %>%
+  group_by(movieId) %>%
+  group_by(date) %>%
+  summarise(avg_rating = mean(rating)) %>%
+  ggplot(aes(date, avg_rating)) +
+  geom_point() +
+  geom_smooth()
+  
+
+# Rating vs movie age
+small <- edx %>% sample_n(10^5)
+small <- small %>% mutate(date = as_datetime(timestamp)) %>%
+  mutate(date = round_date(date, unit = "week")) %>%
+  group_by(movieId) %>%
+  mutate(movie_age = date - min(date)) %>%
+  ungroup()
+
+small %>% ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+  geom_point(alpha=0.01) +
+  geom_smooth()
+
+
+small %>% group_by(movie_age) %>%
+  summarise(avg_rating = mean(rating)) %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), avg_rating)) +
+  geom_point() +
+  geom_smooth()
