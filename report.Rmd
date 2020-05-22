@@ -9,7 +9,7 @@ output:
 ---
 
 ```{r setup, include = FALSE}
-knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE)
+knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, CACHE = TRUE)
 ```
 
 # Introduction
@@ -95,7 +95,7 @@ In developing and exploring the prediction models, the `edx` data set is split i
 
 @@@@ Check for NAs, do heat map?
 
-```{r create-test-train-sets}
+```{r create-test-train-sets, CACHE = FALSE}
 # Given movie data, split into test and training sets.
 split_set <- function(data, test_portion = 0.1) {
   test_index <- createDataPartition(y = data$rating, times = 1, p = test_portion, list = FALSE)
@@ -323,6 +323,9 @@ predicted_ratings <- predict_reg_movie_user(model, test_set)
 
 rmse_reg_movie_user_effects <- RMSE(test_set$rating, predicted_ratings)
 rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect Model", RMSE=rmse_reg_movie_user_effects))
+
+# Free up memory.
+rm(cv_sets)
 ```
 The results of training and evaluating the models on the train and test sets:
 ```{r course-results, include = TRUE}
@@ -340,9 +343,16 @@ It is not obvious that there would be any predictive power in the title of a mov
 In the course exercises we were asked to plot the average rating per week. 
 
 ```{r avg-rating-per-week-plot, include = TRUE, echo = FALSE}
-avg_rating_vs_date <- edx %>%
+# Given movie data frame/tibble, add a column called "date" that is the timestamp
+# converted to type datetime, rounded to week.
+add_week_date <- function(data) {
+  data %>%
   mutate(date = as_datetime(timestamp)) %>%
-  mutate(date = round_date(date, unit = "week")) %>%
+  mutate(date = round_date(date, unit = "week"))
+}
+  
+avg_rating_vs_date <- edx %>%
+  add_week_date() %>%
   group_by(date) %>%
   summarize(rating = mean(rating))
 
@@ -359,10 +369,10 @@ The residuals, after removing $mu$ and movie and user effects, look like this:
 model <- fit_model_reg_movie_user(train_set, best_lambda_reg_movie_user)
 
 resids <- train_set %>%
+  add_week_date() %>%
   left_join(model$b_i, by = "movieId") %>%
   left_join(model$b_u, by = "userId") %>%
-  mutate(resids = rating - model$mu - b_i - b_u, date = as_datetime(timestamp)) %>%
-  mutate(date = round_date(date, unit = "week")) %>%
+  mutate(resids = rating - model$mu - b_i - b_u) %>%
   group_by(date) %>%
   summarise(resids = mean(resids))
   
@@ -390,10 +400,10 @@ fit_model_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user
   
   # Calculate residuals i.e. values after removing mu, movie and user effects.
   resids <- train_set %>%
+    add_week_date() %>%
     left_join(model$b_i, by = "movieId") %>%
     left_join(model$b_u, by = "userId") %>%
-    mutate(resids = rating - model$mu - b_i - b_u, date = as_datetime(timestamp)) %>%
-    mutate(date = round_date(date, unit = "week")) %>%
+    mutate(resids = rating - model$mu - b_i - b_u) %>%
     group_by(date) %>%
     summarise(resids = mean(resids))
   
@@ -432,14 +442,15 @@ rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User 
 
 Using loess for $f$, the resulting RMSE value is `r rmse_time_effect`, which is only a slight improvement on the base regularized movie and user effect model with RMSE `r rmse_reg_movie_user_effects`.
 
+### Movie Time Effect
 ```{r set-sample-size}
 sample_size <- 10^5
 ```
 Instead of examining rating against date, an alternative is to explore the relationship between age of a movie and the ratings. Approximate the release of a movie with the date it was first rated, then the age of a movie is the elapsed time between the timestamp of the rating, and the first rating timestamp. To speed up plotting, a subsample of `r sample_size` rows of the `edx` data set is used in the following.
 ```{r rating-vs-movie-age-plot, include = TRUE}
 small <- edx %>% sample_n(10^5)
-small <- small %>% mutate(date = as_datetime(timestamp)) %>%
-  mutate(date = round_date(date, unit = "week")) %>%
+small <- small %>%
+  add_week_date() %>%
   group_by(movieId) %>%
   mutate(movie_age = date - min(date)) %>%
   ungroup()
@@ -469,9 +480,190 @@ small %>% group_by(movieId) %>%
   geom_smooth()
 ```
 
-The above two plots split the data into two sets. One where the average rating of a movie is equal to or greater than 2.5, and the other below 2.5. The plot for the above average movies is similar to the first plot of all movies, while for the below average movies is is different. This indicates that more accurate predictions will likely be obtained by modelling per movie, rather than having a single function applied to all movies. The overall model is then: $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + \varepsilon_{u,i}$
+The above two plots split the data into two sets. One where the average rating of a movie is equal to or greater than 2.5, and the other below 2.5. The plot for the above average movies is similar to the first plot of all movies, while for the below average movies it is different. This indicates that more accurate predictions will likely be obtained by modelling per movie, rather than having a single function applied to all movies. The overall model is then: $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + \varepsilon_{u,i}$
+
+The steps involved converting the training data timestamp to `datetime` type, rounded to week resolution. Then computation of the residuals (rating value minus $mu$ and movie and user effects), and loess was fitted on a per movie basis of rating against date. Note that for movies with too few reviews (arbitrarily chosen as 100), no loess model is fitted and those movies will have no movie time effect.
+
+```{r movie-effect-v-time}
+# Regularized movie and user effects model, with movie time effect component.
+fit_model_movie_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user) {
+  model <- fit_model_reg_movie_user(train_set, lambda)
+  
+  # Calculate residuals i.e. values after removing mu, movie and user effects.
+  resids <- train_set %>%
+    add_week_date() %>%
+    left_join(model$b_i, by = "movieId") %>%
+    left_join(model$b_u, by = "userId") %>%
+    mutate(resids = rating - model$mu - b_i - b_u)
+  
+  movie_ids <- unique(resids$movieId)
+  # Get the movie IDs that indicate we are at 10%, 20% etc so we can output some progress.
+  output_progress_movie_ids <- movie_ids[seq(1, length(movie_ids), length=10)]
+  loess_models <- sapply(movie_ids, function(movie_id) {
+    if (movie_id %in% output_progress_movie_ids) {
+      cat("#" )
+    }
+    data <- resids %>% filter(movieId == movie_id) %>%
+      group_by(date) %>%
+      summarise(resids = mean(resids))
+    if (nrow(data) > 100) {
+       # Only fit if there is a minimum number of points.
+       loess(resids ~ as.numeric(date), data=data, control = loess.control(surface = "direct"))
+    } else {
+       list()
+    }
+  })
+  
+  cat("\n")
+  loess_models <- tibble(movieId = movie_ids, loess_model = loess_models)
+
+  list(base_model = model, loess_models = loess_models)
+}
+
+# Predict ratings using model (object obtained from fit_model_movie_time_effect()).
+# Complete data frame used in calculations is returned, with predictions in column "pred"
+predict_movie_time_effect_df <- function(model, test_set) {
+
+  test_set_with_date <- test_set %>%
+    add_week_date() %>%
+    left_join(model$base_model$b_i, by = "movieId") %>%
+    left_join(model$base_model$b_u, by = "userId") %>%
+    left_join(model$loess_models, by = "movieId")
+
+  # Calculate time effect.
+  time_effect <- apply(test_set_with_date, 1, function(x) {
+    if (length(x$loess_model) == 0) {
+      # No loess model, no bias
+      0
+    } else {
+      predict(x$loess_model, x$date)
+    }
+  })
+
+  # Compute predictions using all components.
+  test_set_with_date %>%
+    mutate(time_effect = time_effect) %>%
+    mutate(pred = model$base_model$mu + b_i + b_u + time_effect)# %>%
+    #pull(pred)
+}
+
+# Predict ratings using model (object obtained from fit_model_movie_time_effect()).
+predict_movie_time_effect <- function(model, test_set) {
+  predict_movie_time_effect_df(model, test_set)$pred
+}
+
+model <- fit_model_movie_time_effect(train_set)
+predicted_ratings <- predict_movie_time_effect(model, test_set)
+
+rmse_movie_time_effect <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Movie Time Effect Model", RMSE=rmse_movie_time_effect))
+
+rm(model)
+```
+
+The RMSE calculation obtained after building the model against the training set, and using it to predict against the test set is `r rmse_movie_time_effect`, which is a significant improvement over the base regulated movie and user effects model.
+
+### User Time Effect
+
+In a similar manner to the movie effect varying with time, there may be a time effect applicable to the user effect.
+
+```{r rating-vs-user-age-plot, include = TRUE}
+small <- small %>%
+  group_by(userId) %>%
+  mutate(user_age = date - min(date)) %>%
+  ungroup()
+
+small %>% ggplot(aes(as.numeric(user_age, units="weeks"), rating)) +
+  geom_point(alpha=0.01) +
+  geom_smooth()
+```
+
+In the above plot of rating versus user age (age being the time since the user first rated a movie, not the user's actual age), there is a slight dip after the start, before moving back to the average. As per the movie time effect, it is likely to be more accurate to model per user, rather than a trend across all users. The overall model is then: $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + f_{u}(d_{u,i}) + \varepsilon_{u,i}$ where $f_{u}(d_{u,i})$ is a time effect per user. Fitting is done in a similar manner to that done for movie time effects.
+@@@@ Try the overall one, approximately 70,000 users, not feasible on desktop computer.
+
+```{r user-effect-v-time}
+# Regularized movie and user effects model, with movie and user time effect component.
+fit_model_movie_user_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user) {
+  
+  model <- fit_model_movie_time_effect(train_set, lambda)
+  
+  # Calculate residuals i.e. values after removing mu, movie and user effects, and movie time effect.
+  preds <- predict_movie_time_effect_df(model, train_set)
+  preds <- preds %>% mutate(resids = train_set$rating - preds)
+  
+  user_ids <- unique(train_set$userId)
+  
+  # Get the user IDs that indicate we are at 10%, 20% etc so we can output some progress.
+  output_progress_user_ids <- user_ids[seq(1, length(user_ids), length=10)]
+  loess_models <- sapply(user_ids, function(user_id) {
+    if (user_id %in% output_progress_user_ids) {
+      cat("#" )
+    }
+    data <- preds %>% filter(userId == user_id) %>%
+      group_by(date) %>%
+      summarise(resids = mean(resids))
+    if (nrow(data) > 100) {
+       # Only fit if there is a minimum number of points.
+       loess(resids ~ as.numeric(date), data=data, control = loess.control(surface = "direct"))
+    } else {
+       list()
+    }
+  })
+  
+  cat("\n")
+  loess_models <- tibble(userId = user_ids, loess_model = loess_models)
+
+  list(base_model = model, user_loess_models = loess_models)
+}
+
+# Predict ratings using model (object obtained from fit_model_movie_user_time_effect()).
+# Complete data frame used in calculations is returned, with predictions in column "pred"
+predict_movie_user_time_effect_df <- function(model, test_set) {
+  
+  # Carry out prediction of base model, then work out user time effect to add.
+  base_pred <- predict_movie_time_effect_df(model$base_model, test_set)
+  base_pred <- base_pred %>% left_join(model$user_loess_models, by = "userId")
+  
+  # Calculate time effect.
+  time_effect <- apply(base_pred, 1, function(x) {
+    if (length(x$user_loess_model) == 0) {
+      # No loess model, no bias
+      0
+    } else {
+      predict(x$loess_model, x$date)
+    }
+  })
+
+  # Add time effect.
+  base_pred %>%
+    mutate(time_effect = time_effect) %>%
+    mutate(pred = pred + time_effect)
+}
+
+# Predict ratings using model (object obtained from fit_model_movie_user_time_effect()).
+predict_movie_user_time_effect <- function(model, test_set) {
+  predict_movie_user_time_effect_df(model, test_set)$pred
+}
+
+model <- fit_model_movie_user_time_effect(train_set)
+predicted_ratings <- predict_movie_user_time_effect(model, test_set)
+
+rmse_movie_user_time_effect <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Movie + User Time Effect Model",
+                                               RMSE=rmse_movie_user_time_effect))
+
+#rm(model)
+
+```
+
 
 # Results
+
+* Average of 3.5 stars, rather than 2.5 could be explained by users viewing and rating movies they expect to like, rather than watching movies they don't expect to enjoy.
+
+* Arbitrary min value of 100 on number of reviews for the movie effect, could be tuned.
+
+* Could use other algorithms for modelling, e.g. knn and examine accuracy.
 
 # Conclusion
 

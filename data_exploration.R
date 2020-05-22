@@ -78,13 +78,14 @@ small_movie %>% group_by(movieId) %>%
 small_movie %>% group_by(movieId) %>%
   summarise(n=n()) %>% arrange(desc(n)) %>% top_n(10)
 
-#movie_ids <- unique(small_movie$movieId)
-#fits <- sapply(movie_ids, function(id) {
-#  data <- small_movie %>% filter(movieId == id)
-#  ifelse(nrow(data) > 50,
-#         mgcv::gam(rating ~ s(period, bs = "cs"), data=data),
-#         NA)
-#})
+
+movie_ids <- unique(small_movie$movieId)
+fits <- sapply(movie_ids, function(id) {
+  data <- small_movie %>% filter(movieId == id)
+  ifelse(nrow(data) > 50,
+         mgcv::gam(rating ~ s(period, bs = "cs"), data=data),
+         NA)
+})
 
 #fits <- sapply(movie_ids, function(id) {
 #  data <- small_movie %>% filter(movieId == id)
@@ -168,13 +169,77 @@ small <- small %>% mutate(date = as_datetime(timestamp)) %>%
   mutate(movie_age = date - min(date)) %>%
   ungroup()
 
-small %>% ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+small %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
   geom_point(alpha=0.01) +
   geom_smooth()
 
+# Good movies
+small %>% group_by(movieId) %>%
+  filter(mean(rating) >= 2.5) %>%
+  ungroup() %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+  geom_point(alpha=0.01) +
+  geom_smooth()
+
+small %>% group_by(movieId) %>%
+  filter(mean(rating) < 2.5) %>%
+  ungroup() %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+  geom_point(alpha=0.01) +
+  geom_smooth()
 
 small %>% group_by(movie_age) %>%
   summarise(avg_rating = mean(rating)) %>%
   ggplot(aes(as.numeric(movie_age, units="weeks"), avg_rating)) +
   geom_point() +
   geom_smooth()
+
+# Movies with top averages
+small %>% group_by(movieId) %>%
+  filter(n() > 100) %>%
+  summarise(title = unique(title), avg = mean(rating)) %>%
+  arrange(desc(avg))
+
+top_movie_ids <- small %>%
+  group_by(movieId) %>%
+  filter(n() > 100) %>%
+  group_by(movieId) %>%
+  summarise(avg = mean(rating)) %>%
+  top_n(5, avg) %>%
+  pull(movieId)
+  
+small %>% filter(movieId %in% top_movie_ids) %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating, color=movieId)) +
+  geom_point() +
+  geom_line()
+  
+small %>% filter(movieId == 912) %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method="gam")
+
+edx2 <- edx %>% mutate(date = as_datetime(timestamp)) %>%
+  mutate(date = round_date(date, unit = "week")) %>%
+  group_by(movieId) %>%
+  mutate(movie_age = date - min(date)) %>%
+  ungroup()
+
+edx2 %>% filter(movieId == 1198) %>%
+  ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method="gam")
+
+edx2 %>% filter(movieId %in% top_movie_ids) %>%
+  group_by(movieId)# %>%
+  #ggplot(aes(as.numeric(movie_age, "weeks"), rating, colors = movieId)) +
+  #geom_point() +
+  #geom_smooth()
+
+edx2 %>% filter(movieId == 1198) %>%
+  ggplot(aes(date, rating)) +
+  geom_smooth() +
+  geom_point()
+
+edx2 %>% group_by(movieId) %>%
+  filter(n() <= 25)
