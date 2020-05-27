@@ -69,11 +69,9 @@ library(tidyverse)
 library(knitr)
 library(lubridate)
 library(caret)
-#if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
-#library(kableExtra)
+library(gridExtra)
 ```
 ```{r data-structure, include = TRUE, comment = NA}
-#kable(head(edx %>% as_tibble()), caption = "Data Structure")
 str(edx, width = 90, strict.width = "cut")
 ```
 
@@ -490,18 +488,23 @@ fit_model_movie_time_effect <- function(train_set, lambda = best_lambda_reg_movi
   model <- fit_model_reg_movie_user(train_set, lambda)
   
   # Calculate residuals i.e. values after removing mu, movie and user effects.
+  print("Calculating residuals.")
   resids <- train_set %>%
     add_week_date() %>%
     left_join(model$b_i, by = "movieId") %>%
     left_join(model$b_u, by = "userId") %>%
     mutate(resids = rating - model$mu - b_i - b_u)
   
+  print("Fitting loess.")
   movie_ids <- unique(resids$movieId)
+  
   # Get the movie IDs that indicate we are at 10%, 20% etc so we can output some progress.
-  output_progress_movie_ids <- movie_ids[seq(1, length(movie_ids), length=10)]
+  progress_len = 100
+  output_progress_movie_ids <- movie_ids[seq(1, length(movie_ids), length = progress_len)]
+  pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
   loess_models <- sapply(movie_ids, function(movie_id) {
     if (movie_id %in% output_progress_movie_ids) {
-      cat("#" )
+      setTxtProgressBar(pb, which(movie_id == output_progress_movie_ids))
     }
     data <- resids %>% filter(movieId == movie_id) %>%
       group_by(date) %>%
@@ -514,7 +517,6 @@ fit_model_movie_time_effect <- function(train_set, lambda = best_lambda_reg_movi
     }
   })
   
-  cat("\n")
   loess_models <- tibble(movieId = movie_ids, loess_model = loess_models)
 
   list(base_model = model, loess_models = loess_models)
@@ -578,84 +580,82 @@ small %>% ggplot(aes(as.numeric(user_age, units="weeks"), rating)) +
   geom_smooth()
 ```
 
-In the above plot of rating versus user age (age being the time since the user first rated a movie, not the user's actual age), there is a slight dip after the start, before moving back to the average. As per the movie time effect, it is likely to be more accurate to model per user, rather than a trend across all users. The overall model is then: $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + f_{u}(d_{u,i}) + \varepsilon_{u,i}$ where $f_{u}(d_{u,i})$ is a time effect per user. Fitting is done in a similar manner to that done for movie time effects.
-@@@@ Try the overall one, approximately 70,000 users, not feasible on desktop computer.
+In the above plot of rating versus user age (age being the time since the user first rated a movie, not the user's actual age), there is a slight dip after the start, before moving back to the average. As per the movie time effect, it is likely to be more accurate to model per user, rather than a trend across all users. The overall model is then: $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + f_{u}(d_{u,i}) + \varepsilon_{u,i}$ where $f_{u}(d_{u,i})$ is a time effect per user. However there are `r length(unique(edx$userId))` users, and trying to fit models for them wasn't feasible on the desktop PC used.
 
-```{r user-effect-v-time}
-# Regularized movie and user effects model, with movie and user time effect component.
-fit_model_movie_user_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user) {
-  
-  model <- fit_model_movie_time_effect(train_set, lambda)
-  
-  # Calculate residuals i.e. values after removing mu, movie and user effects, and movie time effect.
-  preds <- predict_movie_time_effect_df(model, train_set)
-  preds <- preds %>% mutate(resids = train_set$rating - preds)
-  
-  user_ids <- unique(train_set$userId)
-  
-  # Get the user IDs that indicate we are at 10%, 20% etc so we can output some progress.
-  output_progress_user_ids <- user_ids[seq(1, length(user_ids), length=10)]
-  loess_models <- sapply(user_ids, function(user_id) {
-    if (user_id %in% output_progress_user_ids) {
-      cat("#" )
-    }
-    data <- preds %>% filter(userId == user_id) %>%
-      group_by(date) %>%
-      summarise(resids = mean(resids))
-    if (nrow(data) > 100) {
-       # Only fit if there is a minimum number of points.
-       loess(resids ~ as.numeric(date), data=data, control = loess.control(surface = "direct"))
-    } else {
-       list()
-    }
-  })
-  
-  cat("\n")
-  loess_models <- tibble(userId = user_ids, loess_model = loess_models)
+## Genres
 
-  list(base_model = model, user_loess_models = loess_models)
-}
+The genres column contains character string values, each value represents the genres the movie belongs to (the genres are separated by the "|" character). The genres are ordered alphabetically, so, for example if a movie belongs to the `Comedy` and `Romance` genres, it will be have the value `Comedy|Romance` and not `Romance|Comedy`.
 
-# Predict ratings using model (object obtained from fit_model_movie_user_time_effect()).
-# Complete data frame used in calculations is returned, with predictions in column "pred"
-predict_movie_user_time_effect_df <- function(model, test_set) {
-  
-  # Carry out prediction of base model, then work out user time effect to add.
-  base_pred <- predict_movie_time_effect_df(model$base_model, test_set)
-  base_pred <- base_pred %>% left_join(model$user_loess_models, by = "userId")
-  
-  # Calculate time effect.
-  time_effect <- apply(base_pred, 1, function(x) {
-    if (length(x$user_loess_model) == 0) {
-      # No loess model, no bias
-      0
-    } else {
-      predict(x$loess_model, x$date)
-    }
-  })
-
-  # Add time effect.
-  base_pred %>%
-    mutate(time_effect = time_effect) %>%
-    mutate(pred = pred + time_effect)
-}
-
-# Predict ratings using model (object obtained from fit_model_movie_user_time_effect()).
-predict_movie_user_time_effect <- function(model, test_set) {
-  predict_movie_user_time_effect_df(model, test_set)$pred
-}
-
-model <- fit_model_movie_user_time_effect(train_set)
-predicted_ratings <- predict_movie_user_time_effect(model, test_set)
-
-rmse_movie_user_time_effect <- RMSE(test_set$rating, predicted_ratings)
-rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Movie + User Time Effect Model",
-                                               RMSE=rmse_movie_user_time_effect))
-
-#rm(model)
-
+```{r movie-genres-sample, include = TRUE}
+edx %>% head() %>% select(title, genres)
 ```
 
+These are the unique genre values:
+```{r movie-genres-values, include = TRUE}
+# Genres for each movie.
+movie_and_genres <- edx %>% select(movieId, genres) %>% unique()
+
+# Break into separate rows for each genre and display.
+split_movie_and_genres <- movie_and_genres %>% separate_rows(genres, sep = "\\|")
+unique(split_movie_and_genres$genres)
+```
+
+There is a special value `(no genres listed)`, which indicates a movie has no genres. There is only one movie with this value:
+
+```{r no-genre-movie, include = TRUE}
+edx %>% filter(genres == "(no genres listed)") %>% unique() %>% select(movieId, title, genres) %>% unique()
+```
+
+A histogram plot of genres shows comedies and dramas as the most popular genres.
+
+```{r genre-popularity-plot, include = TRUE}
+split_movie_and_genres %>%
+  group_by(genres) %>%
+  mutate(n = n()) %>%
+  ungroup() %>%
+  mutate(genres = reorder(genres, -n)) %>%
+  ggplot(aes(genres)) +
+  geom_histogram(stat="count") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+Is there any relationship between genre and rating? The following box plot is based on a subsample of 1 million rows from the `edx` data set.
+
+```{r ratings-vs-genres}
+# Work on small data set.
+small <- edx %>% sample_n(10^6) %>%
+  filter(genres != "(no genres listed)") %>%
+  separate_rows(genres, sep = "\\|")
+
+# For ordering, calculate quantiles.
+quantiles <- small %>% group_by(genres) %>%
+  summarise(q1 = quantile(rating, c(0.5)), q2 = quantile(rating, c(0.75)))
+
+small %>%
+  mutate(genres = fct_reorder(genres, rating, .desc = TRUE)) %>%
+  ggplot(aes(genres, rating)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+From the graph it can be seen that there is a relationship between genre and rating. Film-Noir movies tend to be rated highly, while horror movies receive more lower ratings than other genres. Unlike other genres, ratings of 0.5 or 1 aren't considered outliers for horror movies.
+
+```{r ratings-density-plots, include = TRUE}
+small %>% filter(genres %in% c("Horror", "Action", "Film-Noir")) %>%
+  ggplot(aes(rating, fill = genres)) +
+  geom_density(alpha = 0.2) +
+  facet_grid(genres ~ .)
+rm(small)
+```
+
+From the density plots, Action has high proportions of ratings of 3 and 4, while Film-Noir has high ratings and very little low ratings. Horror also has ratings of 3 and 4 as the highest density, however they are not as pronounced as with the Action genre.
+
+@@@@ Build up biases per user, explain.
+
+* Need to save and load objects from local file. have var to turn on/off. Load if the file exists, otherwise create, then save if caching on.
+* Calculation of user biases takes approx 80mins.
+
+Trying to split by category runs out of memory and kills the session. Examine non-split modelling i.e. each unique combination of genres.
 
 # Results
 
