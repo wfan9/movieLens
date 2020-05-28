@@ -10,6 +10,9 @@ output:
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, CACHE = TRUE)
+
+# Save/load computationally expensive data to/from file to save time.
+use_cache <- TRUE
 ```
 
 # Introduction
@@ -17,59 +20,75 @@ knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = 
 The goal of this project is to create a movie recommendation system using the MovieLens data set. Using ideas introduced in **PH125.8x: Data Science: Machine Learning**, the aim is to develop a ML algorithm on one subset of data, and use it to predict movie ratings against a validation set.
 
 ```{r data-setup, cache = TRUE}
-################################
-# Create edx set, validation set
-################################
-
-# Note: this process could take a couple of minutes
-
-if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
-if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
-if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
-
-# MovieLens 10M dataset:
- # https://grouplens.org/datasets/movielens/10m/
- # http://files.grouplens.org/datasets/movielens/ml-10m.zip
-
-dl <- tempfile()
- download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
-
-ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
-                 col.names = c("userId", "movieId", "rating", "timestamp"))
-
-movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
- colnames(movies) <- c("movieId", "title", "genres")
- movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
-                                            title = as.character(title),
-                                            genres = as.character(genres))
-
-movielens <- left_join(ratings, movies, by = "movieId")
-
-# Validation set will be 10% of MovieLens data
-set.seed(1, sample.kind="Rounding")
-# if using R 3.5 or earlier, use `set.seed(1)` instead
-test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
- edx <- movielens[-test_index,]
- temp <- movielens[test_index,]
-
-# Make sure userId and movieId in validation set are also in edx set
-validation <- temp %>% 
-      semi_join(edx, by = "movieId") %>%
-      semi_join(edx, by = "userId")
-
-# Add rows removed from validation set back into edx set
-removed <- anti_join(temp, validation)
-edx <- rbind(edx, removed)
-rm(dl, ratings, movies, test_index, temp, movielens, removed)
+cache_edx_filename <- "rda/edx.RData"
+if (use_cache & file.exists(cache_edx_filename)) {
+  load(cache_edx_filename, envir=.GlobalEnv, verbose=TRUE)
+} else {
+  ################################
+  # Create edx set, validation set
+  ################################
+  
+  # Note: this process could take a couple of minutes
+  
+  if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+  if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+  if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+  
+  # MovieLens 10M dataset:
+   # https://grouplens.org/datasets/movielens/10m/
+   # http://files.grouplens.org/datasets/movielens/ml-10m.zip
+  
+  dl <- tempfile()
+   download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+  
+  ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                   col.names = c("userId", "movieId", "rating", "timestamp"))
+  
+  movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+   colnames(movies) <- c("movieId", "title", "genres")
+   movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                              title = as.character(title),
+                                              genres = as.character(genres))
+  
+  movielens <- left_join(ratings, movies, by = "movieId")
+  
+  # Validation set will be 10% of MovieLens data
+  set.seed(1, sample.kind="Rounding")
+  # if using R 3.5 or earlier, use `set.seed(1)` instead
+  test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+   edx <- movielens[-test_index,]
+   temp <- movielens[test_index,]
+  
+  # Make sure userId and movieId in validation set are also in edx set
+  validation <- temp %>% 
+        semi_join(edx, by = "movieId") %>%
+        semi_join(edx, by = "userId")
+  
+  # Add rows removed from validation set back into edx set
+  removed <- anti_join(temp, validation)
+  edx <- rbind(edx, removed)
+  rm(dl, ratings, movies, test_index, temp, movielens, removed)
+  
+  if (use_cache) {
+    save(edx, validation, file = cache_edx_filename)
+  }
+}
 ```
 The data set is the 10M version of the MovieLens data set (See @@), with the following structure:
 
 ```{r required-packages}
-library(tidyverse)
-library(knitr)
-library(lubridate)
-library(caret)
-library(gridExtra)
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+
+#library(tidyverse)
+#library(knitr)
+#library(lubridate)
+#library(caret)
+#library(gridExtra)
 ```
 ```{r data-structure, include = TRUE, comment = NA}
 str(edx, width = 90, strict.width = "cut")
@@ -91,8 +110,6 @@ In **PH125.8x: Data Science: Machine Learning**, the following models were explo
 
 In developing and exploring the prediction models, the `edx` data set is split into training and test sets (`train_set` and `test_set` respectively). The validation set is only used when computing the final accuracy and isn't used as part of development.
 
-@@@@ Check for NAs, do heat map?
-
 ```{r create-test-train-sets, CACHE = FALSE}
 # Given movie data, split into test and training sets.
 split_set <- function(data, test_portion = 0.1) {
@@ -113,19 +130,6 @@ split_set <- function(data, test_portion = 0.1) {
 
 # Split following the same method as used for creating edx and validation sets.
 set.seed(1, sample.kind="Rounding")
-#test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
-#train_set <- edx[-test_index,]
-#temp <- edx[test_index,]
-
-## Make sure userId and movieId in test set are also in train set
-#test_set <- temp %>% 
-#  semi_join(train_set, by = "movieId") %>%
-#  semi_join(train_set, by = "userId")
-
-## Add rows removed from test set back into edx set
-#removed <- anti_join(temp, train_set)
-#train_set <- rbind(edx, removed)
-#rm(test_index, temp, removed)
 sets <- split_set(edx)
 test_set <- sets$test
 train_set <- sets$train
@@ -242,21 +246,6 @@ rmses <- calc_kfold_rmses(function(test_set, train_set) {
   })
 })
 
-# @@@@
-# Calculate the RMSEs for each of the lambda values on each cross validation set.
-# The final RMSE values are the average (per lambda value).
-#k_rmses <- sapply(1:K, function(k) {
-#  cv_test_set <- cv_sets[, k]$test_set
-#  cv_train_set <- cv_sets[, k]$train_set
-#  
-#  sapply(lambdas, function(lambda) {
-#    model <- fit_model_reg_movie(cv_train_set, lambda)
-#    pred <- predict_reg_movie(model, cv_test_set)
-#    RMSE(cv_test_set$rating, pred)
-#  })
-#})
-#rmses <- rowMeans(k_rmses)
-
 best_lambda = lambdas[which.min(rmses)]
 
 # Generate model against full training set, carry out predictions against test set, and calc RMSE.
@@ -300,23 +289,12 @@ rmses <- calc_kfold_rmses(function(test_set, train_set) {
     RMSE(test_set$rating, pred)
   })
 })
-#@@@@
-#k_rmses <- sapply(1:K, function(k) {
-#  cv_test_set <- cv_sets[, k]$test_set
-#  cv_train_set <- cv_sets[, k]$train_set
 
-#  sapply(lambdas, function(lambda) {
-#    model <- fit_model_reg_movie_user(cv_train_set, lambda)
-#    pred <- predict_reg_movie_user(model, cv_test_set)
-#    RMSE(cv_test_set$rating, pred)
-#  })
-#})
-#rmses <- rowMeans(k_rmses)
 best_lambda <- lambdas[which.min(rmses)]
 best_lambda_reg_movie_user <- best_lambda
 
 # Generate model against full training set, carry out predictions against test set, and calc RMSE.
-model <- fit_model_reg_movie_user(train_set, lambda = best_lambda)
+model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
 predicted_ratings <- predict_reg_movie_user(model, test_set)
 
 rmse_reg_movie_user_effects <- RMSE(test_set$rating, predicted_ratings)
@@ -436,6 +414,7 @@ predicted_ratings <- predict_time_effect(model, test_set)
 
 rmse_time_effect <- RMSE(test_set$rating, predicted_ratings)
 rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Time Effect Model", RMSE=rmse_time_effect))
+rm(model)
 ```
 
 Using loess for $f$, the resulting RMSE value is `r rmse_time_effect`, which is only a slight improvement on the base regularized movie and user effect model with RMSE `r rmse_reg_movie_user_effects`.
@@ -554,13 +533,22 @@ predict_movie_time_effect <- function(model, test_set) {
   predict_movie_time_effect_df(model, test_set)$pred
 }
 
-model <- fit_model_movie_time_effect(train_set)
-predicted_ratings <- predict_movie_time_effect(model, test_set)
+cache_model_movie_time_effect_filename <- "rda/model_movie_time_effect.rds"
+if (use_cache & file.exists(cache_model_movie_time_effect_filename)) {
+  model_movie_time_effect <- readRDS(cache_model_movie_time_effect_filename)
+} else {
+  model_movie_time_effect <- fit_model_movie_time_effect(train_set)
+  
+  if (use_cache) {
+    saveRDS(model_movie_time_effect, cache_model_movie_time_effect_filename)
+  }
+}
+predicted_ratings <- predict_movie_time_effect(model_movie_time_effect, test_set)
 
 rmse_movie_time_effect <- RMSE(test_set$rating, predicted_ratings)
 rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Movie Time Effect Model", RMSE=rmse_movie_time_effect))
 
-rm(model)
+rm(movie_model_time_effect)
 ```
 
 The RMSE calculation obtained after building the model against the training set, and using it to predict against the test set is `r rmse_movie_time_effect`, which is a significant improvement over the base regulated movie and user effects model.
@@ -627,10 +615,6 @@ small <- edx %>% sample_n(10^6) %>%
   filter(genres != "(no genres listed)") %>%
   separate_rows(genres, sep = "\\|")
 
-# For ordering, calculate quantiles.
-quantiles <- small %>% group_by(genres) %>%
-  summarise(q1 = quantile(rating, c(0.5)), q2 = quantile(rating, c(0.75)))
-
 small %>%
   mutate(genres = fct_reorder(genres, rating, .desc = TRUE)) %>%
   ggplot(aes(genres, rating)) +
@@ -650,6 +634,63 @@ rm(small)
 
 From the density plots, Action has high proportions of ratings of 3 and 4, while Film-Noir has high ratings and very little low ratings. Horror also has ratings of 3 and 4 as the highest density, however they are not as pronounced as with the Action genre.
 
+```{r genre-effect}
+
+#' Calculate individual user's bias for genres.
+#'
+#' @param data Movie data.
+#' @param user ID of a user within the data
+#' @param base_model Base model used to calculate predictions.
+#' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
+#'
+calc_user_genre_bias <- function(data, user, base_model, base_predict_func) {
+  # Filter for only necessary data and then calculate residuals.
+  user_data <- data %>% filter(userId == user)
+  resids <- user_data$rating - base_predict_func(base_model, user_data)
+
+  # Split the genres into separate rows, then calculate counts of how often each genre occurs.
+  # Then, per movie, apportion the residual for that movie between the genres of the movie,
+  # using a weight dependent on the ratios of the genre counts i.e. if a user watches a certain
+  # genre more than another, then it will receive a larger portion of the residual.
+  user_data <- user_data %>%
+    mutate(resids = resids) %>%
+    separate_rows(genres, sep = "\\|") %>%
+    group_by(genres) %>%
+    mutate(n = n()) %>%
+    ungroup() %>%
+    group_by(movieId) %>%
+    mutate(bias = (resids * n) / sum(n)) %>%
+    ungroup() %>%
+    group_by(genres) %>%
+    summarise(userId = user, bias = mean(bias))
+  user_data
+}
+
+#' Calculate multiple users' biases for genres.
+#'
+#' @param data Movie data.
+#' @param users Vector of user IDs.
+#' @param base_model Base model used to calculate predictions.
+#' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
+#'
+batch_calc_user_genre_bias <- function(data, users, base_model, base_predict_func) {
+  progress_len = 100
+  output_progress <- users[seq(1, length(users), length = progress_len)]
+  pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
+  
+  results <- lapply(users, function(user) {
+    if (user %in% output_progress) {
+      setTxtProgressBar(pb, which(user == output_progress))
+    }
+    calc_user_genre_bias(data, user, base_model, base_predict_func)
+  })
+  bind_rows(results)
+}
+
+# @@@@ Fit function.
+
+# @@@@ Predict function
+```
 @@@@ Build up biases per user, explain.
 
 * Need to save and load objects from local file. have var to turn on/off. Load if the file exists, otherwise create, then save if caching on.

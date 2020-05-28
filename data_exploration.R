@@ -243,3 +243,76 @@ edx2 %>% filter(movieId == 1198) %>%
 
 edx2 %>% group_by(movieId) %>%
   filter(n() <= 25)
+
+# Genres
+edx %>% separate_rows(genres, sep = "\\|")
+edx %>% filter(movieId == 2001)
+n_movies <- unique(edx$movieId)
+movie_and_genres <- edx %>% select(movieId, genres) %>% unique()
+movie_and_genres %>% separate_rows(genres, sep = "\\|") %>% .$genres %>% unique()
+
+# Build up table for user genre bias.
+#calc_user_genre_bias <- function(data, user) {
+#  user_data <- data %>% filter(userId == user) %>%
+#    separate_rows(genres, sep = "\\|") %>%
+#    group_by(movieId) %>%
+#    mutate(n = n()) %>%
+#    ungroup() %>%
+#    #mutate(bias = rating / n)
+#    mutate(bias = rating)
+#  user_data
+#}
+calc_user_genre_bias <- function(data, user, base_model) {
+  user_data <- data %>% filter(userId == user)
+  resids <- user_data$rating - predict_reg_movie_user(base_model, user_data)
+  user_data <- user_data %>%
+    mutate(resids = resids) %>%
+    separate_rows(genres, sep = "\\|") %>%
+    group_by(genres) %>%
+    mutate(n = n()) %>%
+    ungroup() %>%
+    group_by(movieId) %>%
+    mutate(bias = (resids * n) / sum(n)) %>%
+    ungroup() %>%
+    group_by(genres) %>%
+    summarise(userId = user, bias = mean(bias))
+  user_data
+  
+#  user_data <- data %>% filter(userId == user) %>%
+#    separate_rows(genres, sep = "\\|") %>%
+#    group_by(genres) %>%
+#    mutate(n = n()) %>%
+#    ungroup() %>%
+#    mutate(bias = rating) %>%
+#    group_by(movieId) %>%
+#    mutate(bias = (bias * n) / sum(n)) %>%
+#    ungroup() %>%
+#    group_by(genres) %>%
+#    summarise(userId = user, bias = mean(bias))
+#  user_data
+}
+#calc_user_genre_bias(edx, 2) %>% spread(genres, bias)
+batch_calc_user_genre_bias <- function(data, users, base_model) {
+  progress_len = 100
+  output_progress <- users[seq(1, length(users), length = progress_len)]
+  pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
+  
+  results <- lapply(users, function(user) {
+    if (user %in% output_progress) {
+      setTxtProgressBar(pb, which(user == output_progress))
+    }
+    calc_user_genre_bias(data, user, base_model)
+  })
+  bind_rows(results)
+  
+  #for (user in user_ids[2:10000]) {
+  #  bias <- calc_user_genre_bias(edx, user)
+  #  bind_rows(user_genre_bias, bias)
+  #}
+}
+
+user_ids <- unique(edx$userId)
+base_model <- fit_model_reg_movie_user(edx, best_lambda_reg_movie_user)
+user_genre_bias = calc_user_genre_bias(edx, 1, base_model)
+
+users_genre_bias <- batch_calc_user_genre_bias(edx, user_ids[1:1000], base_model)
