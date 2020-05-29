@@ -643,29 +643,93 @@ From the density plots, Action has high proportions of ratings of 3 and 4, while
 #' @param base_model Base model used to calculate predictions.
 #' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
 #'
-calc_user_genre_bias <- function(data, user, base_model, base_predict_func) {
+#calc_user_genre_bias <- function(data, user, base_model, base_predict_func) {
+#  # Filter for only necessary data and then calculate residuals.
+#  user_data <- data %>% filter(userId == user)
+#  resids <- user_data$rating - base_predict_func(base_model, user_data)
+
+#  # Split the genres into separate rows, then calculate counts of how often each genre occurs.
+#  # Then, per movie, apportion the residual for that movie between the genres of the movie,
+#  # using a weight dependent on the ratios of the genre counts i.e. if a user watches a certain
+#  # genre more than another, then it will receive a larger portion of the residual.
+#  user_data <- user_data %>%
+#    mutate(resids = resids) %>%
+#    separate_rows(genres, sep = "\\|") %>%
+#    group_by(genres) %>%
+#    mutate(n = n()) %>%
+#    ungroup() %>%
+#    group_by(movieId) %>%
+#    mutate(bias = (resids * n) / sum(n)) %>%
+#    ungroup() %>%
+#    group_by(genres) %>%
+#    summarise(userId = user, bias = mean(bias))
+#  user_data
+#}
+
+#' Calculate genre bias for users.
+#'
+#' @param data Movie data.
+#' @param user_ids Vector of userIds to operate on.
+#' @param base_model Base model used to calculate predictions.
+#' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions to then determine residuals.
+#
+#' @return Data frame with userId, genre, and bias columns.
+#'
+calc_user_genre_bias <- function(data, user_ids, base_model, base_predict_func) {
+
   # Filter for only necessary data and then calculate residuals.
-  user_data <- data %>% filter(userId == user)
+  user_data <- data %>% filter(userId %in% user_ids)
   resids <- user_data$rating - base_predict_func(base_model, user_data)
 
-  # Split the genres into separate rows, then calculate counts of how often each genre occurs.
-  # Then, per movie, apportion the residual for that movie between the genres of the movie,
-  # using a weight dependent on the ratios of the genre counts i.e. if a user watches a certain
-  # genre more than another, then it will receive a larger portion of the residual.
   user_data <- user_data %>%
+    # Reduce memory usage by selecting only the columns needed.
+    select(userId, movieId, genres) %>%
     mutate(resids = resids) %>%
+    # Split genres into individual genre values.
     separate_rows(genres, sep = "\\|") %>%
-    group_by(genres) %>%
-    mutate(n = n()) %>%
+    # Calculate the number of times a genre has been rated per user.
+    group_by(userId, genres) %>%
+    mutate(n_genre_per_user = n()) %>%
     ungroup() %>%
-    group_by(movieId) %>%
-    mutate(bias = (resids * n) / sum(n)) %>%
+    # Divide the residual of a user's movie rating between the genres of the movie,
+    # weighted according to how frequently the user has watched movies of a genre.
+    group_by(movieId, userId) %>%
+    mutate(bias = (resids * n_genre_per_user) / sum(n_genre_per_user)) %>%
     ungroup() %>%
-    group_by(genres) %>%
-    summarise(userId = user, bias = mean(bias))
+    # For each genre (per user), calculate the bias as the mean of all bias.
+    group_by(userId, genres) %>%
+    summarise(bias = mean(bias))
   user_data
 }
 
+calc_user_genre_bias_chunked <- function(data, base_model, base_predict_func, num_chunks = 1) {
+  user_ids <- unique(data$userId)
+  
+  # @@@@ HERE
+  # Split into desired number of chunks.
+  chunks <- user_ids %>% group_by((row_number() - 1) %/% (n() / num_chunks)) %>% nest %>% pull(data)
+
+  cat("chunk:")
+  i <- 0
+  genre_biases <- lapply(chunks, function(data) {
+    i <<- i + 1
+    cat(" ", i)
+    
+    # We will break apart genres into separate rows, which will increase memory usage. Before doing that
+    # pull out only the columns we need and avoid duplicating unnecessary data.
+    # Then join against user's genre biases, and total up per user + movie to come up with a single
+    # genre bias value for the user's rating of the movie.
+    data %>% select(userId, movieId, genres) %>%
+      separate_rows(genres, sep = "\\|") %>%
+      left_join(model$user_genre_bias, by = c("userId", "genres")) %>%
+      group_by(userId, movieId) %>%
+      summarise(bias = sum(bias))
+  })
+  genre_biases <- bind_rows(genre_biases)
+  
+  preds + genre_biases$bias
+}
+  
 #' Calculate multiple users' biases for genres.
 #'
 #' @param data Movie data.
@@ -673,19 +737,20 @@ calc_user_genre_bias <- function(data, user, base_model, base_predict_func) {
 #' @param base_model Base model used to calculate predictions, from which residuals are calculated.
 #' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
 #'
-batch_calc_user_genre_bias <- function(data, users, base_model, base_predict_func) {
-  progress_len = 100
-  output_progress <- users[seq(1, length(users), length = progress_len)]
-  pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
+#batch_calc_user_genre_bias <- function(data, users, base_model, base_predict_func) {
+#  progress_len = 100
+#  output_progress <- users[seq(1, length(users), length = progress_len)]
+#  pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
 
-  results <- lapply(users, function(user) {
-    if (user %in% output_progress) {
-      setTxtProgressBar(pb, which(user == output_progress))
-    }
-    calc_user_genre_bias(data, user, base_model, base_predict_func)
-  })
-  bind_rows(results)
-}
+#  results <- lapply(users, function(user) {
+#    if (user %in% output_progress) {
+#      setTxtProgressBar(pb, which(user == output_progress))
+#    }
+#    calc_user_genre_bias(data, user, base_model, base_predict_func)
+#  })
+#  bind_rows(results)
+#}
+
 
 #' Create model that is combination of regularized movie and user effects, and genre effect.
 #'
