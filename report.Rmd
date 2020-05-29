@@ -670,14 +670,14 @@ calc_user_genre_bias <- function(data, user, base_model, base_predict_func) {
 #'
 #' @param data Movie data.
 #' @param users Vector of user IDs.
-#' @param base_model Base model used to calculate predictions.
+#' @param base_model Base model used to calculate predictions, from which residuals are calculated.
 #' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
 #'
 batch_calc_user_genre_bias <- function(data, users, base_model, base_predict_func) {
   progress_len = 100
   output_progress <- users[seq(1, length(users), length = progress_len)]
   pb <- txtProgressBar(min = 0, max = progress_len, style = 3)
-  
+
   results <- lapply(users, function(user) {
     if (user %in% output_progress) {
       setTxtProgressBar(pb, which(user == output_progress))
@@ -687,9 +687,59 @@ batch_calc_user_genre_bias <- function(data, users, base_model, base_predict_fun
   bind_rows(results)
 }
 
-# @@@@ Fit function.
+#' Create model that is combination of regularized movie and user effects, and genre effect.
+#'
+#' @param train_set Movie data.
+#'
+fit_model_genre_reg_movie_user <- function(train_set) {
+  
+  user_ids <- unique(train_set$userId)
+  
+  print("Fitting base model.")
+  base_model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
+  
+  print("Generating user-genre biases.")
+  user_genre_bias <- batch_calc_user_genre_bias(train_set, user_ids, base_model, predict_reg_movie_user)
 
-# @@@@ Predict function
+  list(base_model = base_model, user_genre_bias = user_genre_bias)
+}
+
+#' Predict ratings using model (object obtained from fit_model_genre_reg_movie_user).
+#'
+#' @param model Model obtained from fit_model_genre_reg_movie_user.
+#' @param test_set Movie data to predict against.
+#' @param num_chunks To reduce memory requirements, perform calculations on chunks of data. A value of 1 indictes no split.
+predict_genre_reg_movie_user <- function(model, test_set, num_chunks = 1) {
+  
+  print("Predicting base model values.")
+  preds <- predict_reg_movie_user(model$base_model, test_set)
+  
+  print("Applying genre biases.")
+  
+  # Split into desired number of chunks.
+  chunks <- test_set %>% group_by((row_number() - 1) %/% (n() / num_chunks)) %>% nest %>% pull(data)
+
+  cat("chunk:")
+  i <- 0
+  genre_biases <- lapply(chunks, function(data) {
+    i <<- i + 1
+    cat(" ", i)
+    
+    # We will break apart genres into separate rows, which will increase memory usage. Before doing that
+    # pull out only the columns we need and avoid duplicating unnecessary data.
+    # Then join against user's genre biases, and total up per user + movie to come up with a single
+    # genre bias value for the user's rating of the movie.
+    data %>% select(userId, movieId, genres) %>%
+      separate_rows(genres, sep = "\\|") %>%
+      left_join(model$user_genre_bias, by = c("userId", "genres")) %>%
+      group_by(userId, movieId) %>%
+      summarise(bias = sum(bias))
+  })
+  genre_biases <- bind_rows(genre_biases)
+  
+  preds + genre_biases$bias
+}
+
 ```
 @@@@ Build up biases per user, explain.
 
