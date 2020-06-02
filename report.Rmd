@@ -704,30 +704,27 @@ calc_user_genre_bias <- function(data, user_ids, base_model, base_predict_func) 
 
 calc_user_genre_bias_chunked <- function(data, base_model, base_predict_func, num_chunks = 1) {
   user_ids <- unique(data$userId)
-  
-  # @@@@ HERE
-  # Split into desired number of chunks.
-  chunks <- user_ids %>% group_by((row_number() - 1) %/% (n() / num_chunks)) %>% nest %>% pull(data)
+  cat("@@@@ num_chunks ", num_chunks)
+  #chunks <- ifelse(num_chunks == 1,
+  #                 list(user_ids),
+  #                 split(user_ids, cut(seq_along(user_ids), num_chunks, labels = FALSE)))
 
+  if (num_chunks == 1) {
+    chunks <- list(user_ids)
+  } else {
+    chunks <- split(user_ids, cut(seq_along(user_ids), num_chunks, labels = FALSE))
+  }
+
+  cat("@@@@ num_chunks ", num_chunks, " ", length(chunks))
   cat("chunk:")
   i <- 0
-  genre_biases <- lapply(chunks, function(data) {
+  genre_biases <- lapply(chunks, function(chunk) {
     i <<- i + 1
     cat(" ", i)
-    
-    # We will break apart genres into separate rows, which will increase memory usage. Before doing that
-    # pull out only the columns we need and avoid duplicating unnecessary data.
-    # Then join against user's genre biases, and total up per user + movie to come up with a single
-    # genre bias value for the user's rating of the movie.
-    data %>% select(userId, movieId, genres) %>%
-      separate_rows(genres, sep = "\\|") %>%
-      left_join(model$user_genre_bias, by = c("userId", "genres")) %>%
-      group_by(userId, movieId) %>%
-      summarise(bias = sum(bias))
+    calc_user_genre_bias(data, chunk, base_model, base_predict_func)
   })
   genre_biases <- bind_rows(genre_biases)
-  
-  preds + genre_biases$bias
+  genre_biases
 }
   
 #' Calculate multiple users' biases for genres.
@@ -755,16 +752,18 @@ calc_user_genre_bias_chunked <- function(data, base_model, base_predict_func, nu
 #' Create model that is combination of regularized movie and user effects, and genre effect.
 #'
 #' @param train_set Movie data.
+#' @param num_chunks To reduce memory requirements, perform calculations on chunks of data. A value of 1 indictes no split.
 #'
-fit_model_genre_reg_movie_user <- function(train_set) {
+fit_model_genre_reg_movie_user <- function(train_set, num_chunks = 1) {
   
-  user_ids <- unique(train_set$userId)
+  #@@@@user_ids <- unique(train_set$userId)
   
   print("Fitting base model.")
   base_model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
   
   print("Generating user-genre biases.")
-  user_genre_bias <- batch_calc_user_genre_bias(train_set, user_ids, base_model, predict_reg_movie_user)
+  #@@@@user_genre_bias <- batch_calc_user_genre_bias(train_set, user_ids, base_model, predict_reg_movie_user)
+  user_genre_bias <- calc_user_genre_bias_chunked(train_set, base_model, predict_reg_movie_user, num_chunks)
 
   list(base_model = base_model, user_genre_bias = user_genre_bias)
 }
@@ -783,10 +782,10 @@ predict_genre_reg_movie_user <- function(model, test_set, num_chunks = 1) {
   
   # Split into desired number of chunks.
   chunks <- test_set %>% group_by((row_number() - 1) %/% (n() / num_chunks)) %>% nest %>% pull(data)
-
+  cat("@@@@ chunks ", length(chunks))
   cat("chunk:")
   i <- 0
-  genre_biases <- lapply(chunks, function(data) {
+  genre_biases <- lapply(chunks, function(chunk) {
     i <<- i + 1
     cat(" ", i)
     
@@ -794,21 +793,40 @@ predict_genre_reg_movie_user <- function(model, test_set, num_chunks = 1) {
     # pull out only the columns we need and avoid duplicating unnecessary data.
     # Then join against user's genre biases, and total up per user + movie to come up with a single
     # genre bias value for the user's rating of the movie.
-    data %>% select(userId, movieId, genres) %>%
+    chunk %>% select(userId, movieId, genres) %>%
       separate_rows(genres, sep = "\\|") %>%
       left_join(model$user_genre_bias, by = c("userId", "genres")) %>%
       group_by(userId, movieId) %>%
-      summarise(bias = sum(bias))
+      summarise(bias = sum(bias, na.rm = TRUE))
   })
   genre_biases <- bind_rows(genre_biases)
   
   preds + genre_biases$bias
 }
 
+cache_model_genre_effect_filename <- "rda/model_genre_effect.rds"
+if (use_cache & file.exists(cache_model_genre_effect_filename)) {
+  model_genre_effect <- readRDS(cache_model_genre_effect_filename)
+} else {
+  Sys.time()
+  model_genre_effect <- fit_model_genre_reg_movie_user(train_set, 5)
+  Sys.time()
+  
+  if (use_cache) {
+    saveRDS(model_genre_effect, cache_model_genre_effect_filename)
+  }
+}
+Sys.time()
+predicted_ratings <- predict_genre_reg_movie_user(model_genre_effect, test_set, 5)
+Sys.time()
+
+rmse_genre_effect <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect + Genre Effect Model", RMSE=rmse_genre_effect))
+
+#rm(movie_genre_effect)
 ```
 @@@@ Build up biases per user, explain.
 
-* Need to save and load objects from local file. have var to turn on/off. Load if the file exists, otherwise create, then save if caching on.
 * Calculation of user biases takes approx 80mins.
 
 Trying to split by category runs out of memory and kills the session. Examine non-split modelling i.e. each unique combination of genres.
