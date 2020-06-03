@@ -2,6 +2,7 @@
 title: "MovieLens Project Report"
 author: "William Fang"
 date: "29/04/2020"
+geometry: "left=3cm,right=3cm,top=2cm,bottom=2cm"
 output:
   pdf_document:
     toc: true
@@ -9,7 +10,7 @@ output:
 ---
 
 ```{r setup, include = FALSE}
-knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, CACHE = TRUE)
+knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, CACHE = TRUE, comment = NA)
 
 # Save/load computationally expensive data to/from file to save time.
 use_cache <- TRUE
@@ -90,7 +91,7 @@ if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-
 #library(caret)
 #library(gridExtra)
 ```
-```{r data-structure, include = TRUE, comment = NA}
+```{r data-structure, include = TRUE}
 str(edx, width = 90, strict.width = "cut")
 ```
 
@@ -337,9 +338,9 @@ avg_rating_vs_date %>%
   geom_point(alpha = 0.3) +
   geom_smooth(method = "loess", span = 0.75, method.args = list(degree = 2))
 ```
-The plot shows that there is slight variation of the average rating over time, so there may be an increase in prediction accuracy if we add another term to the prediction model that accounts for this. The formula is (based on the course exercise) $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f(d_{u,i}) + \varepsilon_{u,i}$ where $d_{u,i}$ is the day that user $u$ rated movie $i$ and $f$ is a smooth function.
+The plot shows that there is slight variation of the average rating over time, so there may be an increase in prediction accuracy if we add another term to the prediction model that accounts for this. The formula is (based on the course exercise) $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f(d_{u,i}) + \varepsilon_{u,i}$ where $d_{u,i}$ is the week that user $u$ rated movie $i$ and $f$ is a smooth function.
 
-The residuals, after removing $mu$ and movie and user effects, look like this:
+The residuals, after removing $\mu$ and movie and user effects, look like this:
 
 ```{r residuals-avg-rating-vs-week-plot, include = TRUE, echo = FALSE}
 model <- fit_model_reg_movie_user(train_set, best_lambda_reg_movie_user)
@@ -575,7 +576,7 @@ In the above plot of rating versus user age (age being the time since the user f
 The genres column contains character string values, each value represents the genres the movie belongs to (the genres are separated by the "|" character). The genres are ordered alphabetically, so, for example if a movie belongs to the `Comedy` and `Romance` genres, it will be have the value `Comedy|Romance` and not `Romance|Comedy`.
 
 ```{r movie-genres-sample, include = TRUE}
-edx %>% head() %>% select(title, genres)
+edx %>% head() %>% select(title, genres) %>% kable(caption = "Movie Genres Sample")
 ```
 
 These are the unique genre values:
@@ -591,7 +592,7 @@ unique(split_movie_and_genres$genres)
 There is a special value `(no genres listed)`, which indicates a movie has no genres. There is only one movie with this value:
 
 ```{r no-genre-movie, include = TRUE}
-edx %>% filter(genres == "(no genres listed)") %>% unique() %>% select(movieId, title, genres) %>% unique()
+edx %>% filter(genres == "(no genres listed)") %>% unique() %>% select(movieId, title, genres) %>% unique() %>% kable()`
 ```
 
 A histogram plot of genres shows comedies and dramas as the most popular genres.
@@ -633,6 +634,71 @@ rm(small)
 ```
 
 From the density plots, Action has high proportions of ratings of 3 and 4, while Film-Noir has high ratings and very little low ratings. Horror also has ratings of 3 and 4 as the highest density, however they are not as pronounced as with the Action genre.
+
+The above plots show effects of genre aggregated across all users, however individual users have different preferences and accuracy is likely to be improved by modelling a per user genre effect. The formula for adding a user genre effect to the regularized movie and user model is (based on, but differing the formula in the course exercise):
+
+$Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \sum_{k=1}^K x_{i,k} \beta_{u,k} + \varepsilon_{u,i}$.
+
+$K$ is the set of genres, $\beta_{u,k}$ is the bias for user $u$ and genre $k$, and $x_{i,k}$ is 1 if movie $i$ belongs to genre $k$, otherwise 0. In other words, we are adding a user's genre bias to a movie only if it belongs to that genre. 
+
+Below the residual (difference between predicted value of the regularized movie and user model) is shown for a single row for user 1 and the movie Boomerang.
+```{r single-residual-genre, include = TRUE}
+# Fit the regularized movie and user model, in order to calculate predictions then residuals.
+model <- fit_model_reg_movie_user(train_set, best_lambda_reg_movie_user)
+
+# Only need to do this for one sample user.
+user1_data <- train_set %>% filter(userId == 1)
+
+predicted_ratings <- predict_reg_movie_user(model, user1_data)
+user1_data <- user1_data %>% mutate(resid = .$rating - predicted_ratings)
+user1_data %>% head(1) %>%
+  select(userId, movieId, title, genres, residual = resid) %>%
+  kable(caption = "Residual Movie Example")
+```
+
+The movie Boomerang belongs to 2 genres, and the residual needs to be apportioned between the two. One way would be to simply divide the residual equally between the 2 genres. However if the user has rated a lot of comedies, but not many romances, then it would be better to apply a weight to each genre that reflects this.
+
+Denote the number of times a user has rated a movie with genre $k$ as $n_{u,k}$, then the weight to apply to genre $k$ for movie $i$ is:
+
+$w_{i,u,k} = n_{u,k} / \sum_{k=1}^K x_{i,k}n_{u,k}$ ($x_{i,k}$ defined as previously).
+
+The residual for a movie $i$, rated by user $u$ can be expressed as:
+
+$r_{i,u} = \sum_{k=1}^K w_{i,u,k} \beta_{i,u,k}$.
+
+The term $\beta_{i,u,k}$ represents the bias for genre $k$ of user $u$ for movie $i$. Then the user's bias for each genre, $\beta_{u,k}$ can be taken as the average of the values of $\beta_{i,u,k}$.
+
+```{r genre-effect-weighted, include = TRUE}
+user1_data %>%
+  # Split genres into individual genre values.
+  separate_rows(genres, sep = "\\|") %>%
+  # Calculate the number of times a genre has been rated per user.
+  group_by(userId, genres) %>%
+  mutate(n_genre_per_user = n()) %>%
+  ungroup() %>%
+  # Divide the residual of a user's movie rating between the genres of the movie,
+  # weighted according to how frequently the user has watched movies of a genre.
+  group_by(movieId, userId) %>%
+  mutate(bias = (resid * n_genre_per_user) / sum(n_genre_per_user)) %>%
+  ungroup() %>%
+  head(10) %>%
+  select(title, genres, count = n_genre_per_user, residual = resid, bias) %>%
+  kable(caption = "Distribution of Residual Per Genre")
+
+rm(model, user1_data, predicted_ratings)
+```
+
+The above table shows a portion of the results of calculation results for user 1. User 1 has rated 9 movies in the Comedy genre, and 5 in the Romance genre, so the residual of 0.837 for the movie Boomerang is apportioned into biases where Comedy has almost twice as much as Romance. The genre biases for user 1 are then calculated as the average bias per genre.
+
+Note that computing these genre biases per user involves splitting each row into multiple rows, one per genre contained in the `genres` column, this leads to increased memory usage that is beyond the available memory of the desktop computer this report was produced on. To work around this, the training set is broken into smaller chunks for processing, rather than attempting the whole set at once.
+
+## Models
+
+The final model that will be trained on the `edx` set and evaluated against the `validation` set is:
+
+$Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + \sum_{k=1}^K x_{i,k} \beta_{u,k} + \varepsilon_{u,i}$.
+
+In addition, the course defined models, the movie time effect model, and the user genre effect models will also be trained and evaluated for comparison purposes.
 
 ```{r genre-effect}
 
@@ -825,11 +891,31 @@ rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User 
 
 #rm(movie_genre_effect)
 ```
-@@@@ Build up biases per user, explain.
 
-* Calculation of user biases takes approx 80mins.
 
-Trying to split by category runs out of memory and kills the session. Examine non-split modelling i.e. each unique combination of genres.
+```{r just-avg-movie-results}
+mu <- mean(edx$rating)
+rmse_naive <- RMSE(validation$rating, mu)
+rmse_results <- tibble(method = "Just the average", RMSE = rmse_naive)
+```
+  
+user_avgs <- edx %>%
+  left_join(movie_avgs, by = "movieId") %>%
+  group_by(userId) %>%
+  summarise(b_u = mean(rating - mu - b_i))
+  
+
+# Movie and user effects model.
+user_avgs <- train_set %>%
+
+predicted_ratings <- test_set %>%
+  left_join(movie_avgs, by = "movieId") %>%
+  left_join(user_avgs, by = "userId") %>%
+  mutate(pred = mu + b_i + b_u) %>%
+  pull(pred)
+
+rmse_movie_user_effects <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Movie and User effects", RMSE=rmse_movie_user_effects))
 
 # Results
 
