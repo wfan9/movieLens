@@ -101,15 +101,7 @@ Each row is a single rating of a movie by a user.
 
 # Analysis
 
-In **PH125.8x: Data Science: Machine Learning**, the following models were explored:
-
-*  $Y_{u,i} = \mu + \varepsilon_{u,i}$ Predict rating of movie $i$ by user $u$ as mean of all ratings. $\epsilon_{u,i}$ represents independent errors sampled from the same distribution centered at 0.
-*  $Y_{u,i} = \mu + b_{i} + \varepsilon_{u,i}$ As above, but with a bias added for movie $i$.
-*  $Y_{u,i} = \mu + b_{i} + b_{u} + \varepsilon_{u,i}$ As above, but with a bias added for user $u$.
-*  $Y_{u,i} = \mu + b_{i}(\lambda) + \varepsilon_{u,i}$ Regularized movie effect model.
-*  $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \varepsilon_{u,i}$ Regularized movie and user effect model.
-
-In developing and exploring the prediction models, the `edx` data set is split into training and test sets (`train_set` and `test_set` respectively). The validation set is only used when computing the final accuracy and isn't used as part of development.
+The `edx` training set is split into a `train_set` and `test_set` for the purposes of analysing and developing models. As a starting point, the course models from **PH125.8x: Data Science: Machine Learning** are implemented and evaluated against these sets.
 
 ```{r create-test-train-sets, CACHE = FALSE}
 # Given movie data, split into test and training sets.
@@ -137,44 +129,186 @@ train_set <- sets$train
 rm(sets)
 ```
 
-```{r course-models}
-# Root mean square error calculation function.
+## Course Models
+
+### Just The Average
+
+The first model was simply to predict a rating value as the average of all ratings.
+
+$$Y_{u,i} = \mu + \varepsilon_{u,i}$$
+
+$Y_{u,i}$ is the predicted rating of movie $i$ by user $u$, $\mu$ is the average of all ratings, and $\epsilon_{u,i}$ represents independent errors sampled from the same distribution centered at 0.
+
+```{r course-model-just-mean}
+
+#' Calculate root mean square error.
+#'
+#' @param true_ratings Vector of true ratings.
+#' @param predicted_ratings Vector of predicted ratings.
+#'
+#' @return RMSE.
 RMSE <- function(true_ratings, predicted_ratings){
-    sqrt(mean((true_ratings - predicted_ratings)^2))
+  sqrt(mean((true_ratings - predicted_ratings)^2))
 }
 
-# Naive model based on mean of all ratings.
-mu <- mean(train_set$rating)
-rmse_naive <- RMSE(test_set$rating, mu)
+#' Fit naive model which is just the mean of all ratings.
+#'
+#' @param train_set Movie data to train on.
+#'
+#' @return Mean of all ratings in the train set.
+fit_model_just_mean <- function(train_set) {
+  mean(train_set$rating)
+}
+
+#' Predict ratings on data using given model.
+#'
+#' @param data Movie data to predict against.
+#' @param model Obtained from fit_model_just_mean()
+#'
+#' @return Vector of predicted ratings.
+predict_just_mean <- function(data, model) {
+  model
+}
+
+model <- fit_model_just_mean(train_set)
+predicted_ratings <- predict_just_mean(test_set, model)
+rmse_naive <- RMSE(test_set$rating, predicted_ratings)
+
+# Build up table of RMSE results.
 rmse_results <- tibble(method = "Just the average", RMSE = rmse_naive)
+rm(model, predicted_ratings)
+```
 
-# Movie effects model.
-movie_avgs <- train_set %>%
-  group_by(movieId) %>%
-  summarise(b_i = mean(rating - mu))
+The RMSE value obtained from this model is `r rmse_naive`.
 
-predicted_ratings <- mu + test_set %>%
-  left_join(movie_avgs, by = "movieId") %>%
-  pull(b_i)
+### Movie Effect
 
-rmse_movie_effects <- RMSE(test_set$rating, predicted_ratings)
-rmse_results <- bind_rows(rmse_results, tibble(method="Movie effects", RMSE=rmse_movie_effects))
+$$Y_{u,i} = \mu + b_{i} + \varepsilon_{u,i}$$
 
-# Movie and user effects model.
-user_avgs <- train_set %>%
-  left_join(movie_avgs, by = "movieId") %>%
-  group_by(userId) %>%
-  summarise(b_u = mean(rating - mu - b_i))
+Extension of the first model, where a movie effect term is added. $b_{i}$ is the bias for movie $i$, which is calculated as the average of the difference from $\mu$ across all ratings for the movie.
 
-predicted_ratings <- test_set %>%
-  left_join(movie_avgs, by = "movieId") %>%
-  left_join(user_avgs, by = "userId") %>%
-  mutate(pred = mu + b_i + b_u) %>%
-  pull(pred)
+```{r course-model-movie-effects}
+#' Fit movie effects model.
+#'
+#' @param train_set Movie data to train on.
+#'
+#' @return Model consisting of value "mu" and frame "b_i" effects per movie.
+fit_model_movie_effect <- function(train_set) {
+  mu <- mean(train_set$rating)
+  b_i <- train_set %>%
+    group_by(movieId) %>%
+    summarise(b_i = mean(rating - mu))
 
-rmse_movie_user_effects <- RMSE(test_set$rating, predicted_ratings)
-rmse_results <- bind_rows(rmse_results, tibble(method="Movie and User effects", RMSE=rmse_movie_user_effects))
+  list(mu = mu, b_i = b_i)
+}
 
+#' Predict ratings on data using given model.
+#'
+#' @param data Movie data to predict against.
+#' @param model Obtained from fit_model_movie_effect()
+#'
+#' @return Vector of predicted ratings.
+predict_movie_effect <- function(data, model) {
+  model$mu + data %>%
+    left_join(model$b_i, by = "movieId") %>%
+    pull(b_i)
+}
+
+#movie_avgs <- train_set %>%
+#  group_by(movieId) %>%
+#  summarise(b_i = mean(rating - mu))
+#
+#predicted_ratings <- mu + test_set %>%
+#  left_join(movie_avgs, by = "movieId") %>%
+#  pull(b_i)
+
+model <- fit_model_movie_effect(train_set)
+predicted_ratings <- predict_movie_effect(test_set, model)
+
+rmse_movie_effect <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Movie effects", RMSE=rmse_movie_effect))
+rm(model, predicted_ratings)
+```
+
+The RMSE value obtained from this model is `r rmse_movie_effect`.
+
+### Movie and User Effect
+
+The movie effect model has another term added to it, that represents user bias $b_{u}$, and is calculated in a similar manner as for movie effect. 
+
+$$Y_{u,i} = \mu + b_{i} + b_{u} + \varepsilon_{u,i}$$
+
+```{r course-model-movie-user-effects}
+#' Fit movie and user effects model.
+#'
+#' @param train_set Movie data to train on.
+#'
+#' @return Model consisting of "base_model", model from fit_model_movie_effect(), and frame "b_u" effects per user.
+fit_model_movie_user_effect <- function(train_set) {
+  base_model <- fit_model_movie_effect(tain-set)
+  b_u <- train_set %>%
+    left_join(base_model$b_i, by = "movieId") %>%
+    group_by(userId) %>%
+    summarise(b_u = mean(rating - base_model$mu - b_i))
+
+  list(base_model = base_model, b_u = b_u)
+}
+
+#' Predict ratings on data using given model.
+#'
+#' @param data Movie data to predict against.
+#' @param model Obtained from fit_model_movie_user_effect()
+#'
+#' @return Vector of predicted ratings.
+predict_movie_user_effect <- function(data, model) {
+  predict_movie_effect(data, model$base_model) +
+    data %>% left_join(model$b_u, by = "userId") %>%
+    pull(b_u)
+}
+
+#user_avgs <- edx %>%
+#  left_join(movie_avgs, by = "movieId") %>%
+#  group_by(userId) %>%
+#  summarise(b_u = mean(rating - mu - b_i))
+#
+#
+## Movie and user effects model.
+#user_avgs <- train_set %>%
+#  left_join(movie_avgs, by = "movieId") %>%
+#  group_by(userId) %>%
+#  summarise(b_u = mean(rating - mu - b_i))
+#
+#predicted_ratings <- test_set %>%
+#  left_join(movie_avgs, by = "movieId") %>%
+#  left_join(user_avgs, by = "userId") %>%
+#  mutate(pred = mu + b_i + b_u) %>%
+#  pull(pred)
+
+model <- fit_model_movie_user_effect(train_set)
+predicted_ratings <- predict_movie_user_effect(test_set, model)
+
+rmse_movie_user_effect <- RMSE(test_set$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Movie and User effects", RMSE=rmse_movie_user_effect))
+
+rm(model, predicted_ratings)
+```
+
+The RMSE value obtained from this model is `r rmse_movie_user_effect`.
+
+### Regularized Movie Effect Model.
+
+The movie effect is regularized by providing a term that penalizes movies with few ratings.
+
+$$Y_{u,i} = \mu + b_{i}(\lambda) + \varepsilon_{u,i}$$
+
+where $b_{i}$ is approximated by:
+
+$$\hat{b}_i(\lambda) = \frac{1}{\lambda + n_i} \sum_{u=1}^{n_i} \left(Y_{u,i} - \hat{\mu}\right)$$
+
+$n_i$ is the number of ratings of movie $i$. The optimal value for $\lambda$ is obtained using cross validation.
+
+```{r course-model-reg-movie-effects}
+# @@@@ HERE
 # Regularized movie effects model.
 # Code is different to course code which used test data for cross validation.
 
@@ -255,6 +389,14 @@ predicted_ratings <- predict_reg_movie(model, test_set)
 
 rmse_reg_movie_effects <- RMSE(test_set$rating, predicted_ratings)
 rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie Effect Model", RMSE=rmse_reg_movie_effects))
+```
+
+
+*  $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \varepsilon_{u,i}$ Regularized movie and user effect model.
+
+In developing and exploring the prediction models, the `edx` data set is split into training and test sets (`train_set` and `test_set` respectively). The validation set is only used when computing the final accuracy and isn't used as part of development.
+
+
 
 # Regularized movie and user effects model.
 
@@ -893,10 +1035,27 @@ rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User 
 ```
 
 
-```{r just-avg-movie-results}
+```{r just-avg-movie-model}
 mu <- mean(edx$rating)
 rmse_naive <- RMSE(validation$rating, mu)
 rmse_results <- tibble(method = "Just the average", RMSE = rmse_naive)
+```
+
+```{r movie-effects-model}
+movie_avgs <- edx %>%
+  group_by(movieId) %>%
+  summarise(b_i = mean(rating - mu))
+
+predicted_ratings <- mu + validation %>%
+  left_join(movie_avgs, by = "movieId") %>%
+  pull(b_i)
+
+rmse_movie_effects <- RMSE(validation$rating, predicted_ratings)
+rmse_results <- bind_rows(rmse_results, tibble(method="Movie effects", RMSE=rmse_movie_effects))
+```
+
+```{r movie-user-effects-model}
+
 ```
   
 user_avgs <- edx %>%
