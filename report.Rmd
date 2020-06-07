@@ -704,14 +704,14 @@ fit_model_movie_time_effect <- function(train_set, lambda = best_lambda_reg_movi
 #' @return Vector of predicted ratings.
 predict_movie_time_effect <- function(data, model) {
 
-  test_set_with_date <- test_set %>%
+  data_with_date <- data %>%
     add_week_date() %>%
     left_join(model$base_model$b_i, by = "movieId") %>%
     left_join(model$base_model$b_u, by = "userId") %>%
     left_join(model$loess_models, by = "movieId")
 
   # Calculate time effect.
-  time_effect <- apply(test_set_with_date, 1, function(x) {
+  time_effect <- apply(data_with_date, 1, function(x) {
     if (length(x$loess_model) == 0) {
       # No loess model, no bias
       0
@@ -721,7 +721,7 @@ predict_movie_time_effect <- function(data, model) {
   })
 
   # Compute predictions using all components.
-  test_set_with_date %>%
+  data_with_date %>%
     mutate(time_effect = time_effect) %>%
     mutate(pred = model$base_model$mu + b_i + b_u + time_effect) %>%
     pull(pred)
@@ -908,8 +908,14 @@ calc_user_genre_bias <- function(data, user_ids, base_model, base_predict_func) 
 
   # Filter for only necessary data and then calculate residuals.
   user_data <- data %>% filter(userId %in% user_ids)
-  resids <- user_data$rating - base_predict_func(user_data, base_model)
+  print("@@@@ 1")
+  cat("nrow user_data ", nrow(user_data), "\n")
+  preds <- base_predict_func(user_data, base_model)
+  cat("length(preds) ", length(preds), "\n")
+  #resids <- user_data$rating - base_predict_func(user_data, base_model)
+  resids <- user_data$rating - preds
 
+  print("@@@@ 2")
   user_data <- user_data %>%
     # Reduce memory usage by selecting only the columns needed.
     select(userId, movieId, genres) %>%
