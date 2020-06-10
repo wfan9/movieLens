@@ -1,7 +1,7 @@
 ---
 title: "MovieLens Project Report"
 author: "William Fang"
-date: "29/04/2020"
+date: "10/06/2020"
 geometry: "left=3cm,right=3cm,top=2cm,bottom=2cm"
 output:
   pdf_document:
@@ -12,8 +12,8 @@ output:
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(include = FALSE, echo = FALSE, warning = FALSE, message = FALSE, error = FALSE, CACHE = TRUE, comment = NA)
 
-# Save/load computationally expensive data to/from file to save time.
-use_cache <- TRUE
+# Save/load computationally expensive data to/from file to save time during development.
+use_cache <- FALSE
 ```
 
 # Introduction
@@ -75,7 +75,6 @@ if (use_cache & file.exists(cache_edx_filename)) {
   }
 }
 ```
-The data set is the 10M version of the MovieLens data set (See @@), with the following structure:
 
 ```{r required-packages}
 if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
@@ -85,26 +84,29 @@ if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.
 if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
 if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
 
-#library(tidyverse)
-#library(knitr)
-#library(lubridate)
-#library(caret)
-#library(gridExtra)
 ```
+
+The data set is the 10M version of the MovieLens data set, with the following structure:
 ```{r data-structure, include = TRUE}
 str(edx, width = 90, strict.width = "cut")
 ```
 
 Each row is a single rating of a movie by a user.
 
-* Key steps performed
+The models introduced in the course are implemented and evaluated against the data to establish a baseline accuracy which will be improved upon. Then the features of the data that have not been incorporated in the course models are explored and analysed to determine if they can be used to improve the prediction model. Finally the models will be tested against a validation set (that was not used during development) to establish their accuracy, which is calculated using Root Mean Square Error.
 
 # Analysis
 
-The `edx` training set is split into a `train_set` and `test_set` for the purposes of analysing and developing models. As a starting point, the course models from **PH125.8x: Data Science: Machine Learning** are implemented and evaluated against these sets.
+The `edx` training set is split into a `train_set` and `test_set` for the purposes of analyzing and developing models. As a starting point, the course models from **PH125.8x: Data Science: Machine Learning** are implemented and evaluated against these sets.
 
 ```{r create-test-train-sets, CACHE = FALSE}
-# Given movie data, split into test and training sets.
+
+#' Given movie data, split into test and training sets.
+#'
+#' @param data Movie data to split
+#' @param test_portion Portion of movie data to treat as test data.
+#'
+#' @return List containing "test" and "train" data frames.
 split_set <- function(data, test_portion = 0.1) {
   test_index <- createDataPartition(y = data$rating, times = 1, p = test_portion, list = FALSE)
   train_set <- data[-test_index,]
@@ -188,6 +190,7 @@ $$Y_{u,i} = \mu + b_{i} + \varepsilon_{u,i}$$
 Extension of the first model, where a movie effect term is added. $b_{i}$ is the bias for movie $i$, which is calculated as the average of the difference from $\mu$ across all ratings for the movie.
 
 ```{r course-model-movie-effects}
+
 #' Fit movie effects model.
 #'
 #' @param train_set Movie data to train on.
@@ -213,14 +216,6 @@ predict_movie_effect <- function(data, model) {
     left_join(model$b_i, by = "movieId") %>%
     pull(b_i)
 }
-
-#movie_avgs <- train_set %>%
-#  group_by(movieId) %>%
-#  summarise(b_i = mean(rating - mu))
-#
-#predicted_ratings <- mu + test_set %>%
-#  left_join(movie_avgs, by = "movieId") %>%
-#  pull(b_i)
 
 model <- fit_model_movie_effect(train_set)
 predicted_ratings <- predict_movie_effect(test_set, model)
@@ -291,6 +286,7 @@ $$\hat{b}_i(\lambda) = \frac{1}{\lambda + n_i} \sum_{u=1}^{n_i} \left(Y_{u,i} - 
 $n_i$ is the number of ratings of movie $i$. The optimal value for $\lambda$ is obtained using cross validation.
 
 ```{r course-model-reg-movie-effects}
+
 #' Fit regularized movie effects model.
 #'
 #' @param train_set Movie data to train on.
@@ -312,10 +308,6 @@ fit_model_reg_movie <- function(train_set, lambda) {
 #' @return Vector of predicted ratings.
 predict_reg_movie <- function(data, model) {
   data %>%
-    #left_join(model$just_the_sum, by='movieId') %>%
-    #mutate(b_i = s / (n_i + model$lambda)) %>%
-    #mutate(pred = model$mu + b_i) %>%
-    #pull(pred)
     left_join(model$b_i, by = "movieId") %>%
     mutate(pred = model$mu + b_i) %>%
     pull(pred)
@@ -343,9 +335,6 @@ create_cv_sets <- function(data, k) {
 }
 
 # Generate the sets once to save on computation time and reuse for all cross validation situations.
-#cv_sets <- cached_creation("rda/cv_sets.rds",
-#                           function() { create_cv_sets(train_set, K) })
-#cv_sets <- create_cv_sets(train-set, K)
 cache_cv_sets_filename <- "rda/cv_sets.rds"
 if (use_cache & file.exists(cache_cv_sets_filename)) {
   cv_sets <- readRDS(cache_cv_sets_filename)
@@ -356,13 +345,6 @@ if (use_cache & file.exists(cache_cv_sets_filename)) {
     saveRDS(cv_sets, cache_cv_sets_filename)
   }
 }
-
-#cv_sets <- sapply(1:K, function(k) {
-#  sets <- split_set(train_set)
-#  test_set <- sets$test
-#  train_set <- sets$train
-#  list(test_set = test_set, train_set = train_set)
-#})
 
 #' Apply K fold cross validation to calculate RMSE values. func is called K times, with each pair
 #' of test and training sets, and final returned RMSEs are the average of each result.
@@ -402,13 +384,6 @@ calc_kfold_rmses_reg_movie <- function(cv_sets, lamdas) {
   })
 }
 
-#rmses <- calc_kfold_rmses(cv_sets, lambdas, function(test_set, train_set) {
-#  sapply(lambdas, function(lambda) {
-#    model <- fit_model_reg_movie(train_set, lambda)
-#    pred <- predict_reg_movie(test_set, model)
-#    RMSE(test_set$rating, pred)
-#  })
-#})
 cache_rmses_reg_movie_filename <- "rda/rmses_reg_movie.rds"
 if (use_cache & file.exists(cache_rmses_reg_movie_filename)) {
   rmses <- readRDS(cache_rmses_reg_movie_filename)
@@ -419,10 +394,8 @@ if (use_cache & file.exists(cache_rmses_reg_movie_filename)) {
     saveRDS(rmses, cache_rmses_reg_movie_filename)
   }
 }
-#rmses <- calc_kfold_rmses_reg_movie(cv_sets, lambdas)
 best_lambda_reg_movie = lambdas[which.min(rmses)]
 
-# Generate model against full training set, carry out predictions against test set, and calc RMSE.
 model <- fit_model_reg_movie(train_set, lambda = best_lambda_reg_movie)
 predicted_ratings <- predict_reg_movie(test_set, model)
 
@@ -433,9 +406,14 @@ rm(model, predicted_ratings)
 ```
 
 The RMSE values versus lambda are shown in the plot below:
-```{r course-model-reg-movie-effects-lambda-plot}
+
+```{r course-model-reg-movie-effects-lambda-plot, include = TRUE}
 tibble(lambda = lambdas, rmse = rmses) %>%
-  ggplot(aes(lambda, rmse)) + geom_point()
+  ggplot(aes(lambda, rmse)) +
+  geom_point() +
+  ggtitle("RMSE Versus Lambda For Regularized Movie Effect") +
+  xlab("Lambda") +
+  ylab("RMSE")
 ```
 
 The optimal value for $\lambda$ is `r best_lambda_reg_movie`. Using that for training on the `train_set`, and evaluating against the `test_set`, the RMSE value obtained from this model is `r rmse_reg_movie_effect`.
@@ -444,7 +422,7 @@ The optimal value for $\lambda$ is `r best_lambda_reg_movie`. Using that for tra
 
 $$Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \varepsilon_{u,i}$$
 
-In a similar manner to the regularized movie effect model, the user bias can also be regularised.
+In a similar manner to the regularized movie effect model, the user bias can also be regularized.
 
 ```{r course-model-reg-movie-user-effects}
 
@@ -497,7 +475,7 @@ calc_kfold_rmses_reg_movie_user <- function(cv_sets, lamdas) {
     })
  })
 }
-#rmses <- calc_kfold_rmses_reg_movie_user(cv_sets, lambdas)
+
 cache_rmses_reg_movie_user_filename <- "rda/rmses_reg_movie_user.rds"
 if (use_cache & file.exists(cache_rmses_reg_movie_user_filename)) {
   rmses <- readRDS(cache_rmses_reg_movie_user_filename)
@@ -509,24 +487,16 @@ if (use_cache & file.exists(cache_rmses_reg_movie_user_filename)) {
   }
 }
 
-# Cross validation to determine optimal lambda.
-#rmses <- calc_kfold_rmses(function(test_set, train_set) {
-#  sapply(lambdas, function(lambda) {
-#    model <- fit_model_reg_movie_user(train_set, lambda)
-#    pred <- predict_reg_movie_user(test_set, model)
-#    RMSE(test_set$rating, pred)
-#  })
-#})
-
 best_lambda <- lambdas[which.min(rmses)]
 best_lambda_reg_movie_user <- best_lambda
 
-# Generate model against full training set, carry out predictions against test set, and calc RMSE.
 model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
 predicted_ratings <- predict_reg_movie_user(test_set, model)
 
 rmse_reg_movie_user_effect <- RMSE(test_set$rating, predicted_ratings)
-rmse_results <- bind_rows(rmse_results, tibble(method="Regularized Movie + User Effect Model", RMSE=rmse_reg_movie_user_effect))
+rmse_results <- bind_rows(rmse_results,
+                          tibble(method="Regularized Movie + User Effect Model",
+                                 RMSE=rmse_reg_movie_user_effect))
 
 rm(model, predicted_ratings)
 
@@ -534,9 +504,13 @@ rm(model, predicted_ratings)
 rm(cv_sets)
 ```
 
-```{r course-model-reg-movie-effects-lambda-plot}
+```{r course-model-reg-movie-user-effects-lambda-plot, include = TRUE}
 tibble(lambda = lambdas, rmse = rmses) %>%
-  ggplot(aes(lambda, rmse)) + geom_point()
+  ggplot(aes(lambda, rmse)) +
+  geom_point() +
+  ggtitle("RMSE Versus Lambda For Regularized Movie And User Effect") +
+  xlab("Lambda") +
+  ylab("RMSE")
 ```
 
 The above plot shows RMSE values versus lambda, and the optimal value for $\lambda$ is now `r best_lambda_reg_movie_user`. Using that for training on the `train_set`, and evaluating against the `test_set`, the RMSE value obtained from this model is `r rmse_reg_movie_effect`.
@@ -545,15 +519,20 @@ From the data, there are 3 elements that are yet to be incorporated into any of 
 
 ## Movie Title
 
-It is not obvious that there would be any predictive power in the title of a movie, distinct from that of the movie effects value $b_i$.
+It is not obvious that there would be any predictive power in the title of a movie, distinct from that of the movie effects value $b_i$, so no time has been spent exploring this feature of the data set.
 
 ## Timestamp
 
 In the course exercises the average rating per week was plotted:
 
 ```{r avg-rating-per-week-plot, include = TRUE}
-# Given movie data frame/tibble, add a column called "date" that is the timestamp
-# converted to type datetime, rounded to week.
+
+#' Given movie data frame/tibble, add a column called "date" that is the timestamp
+#' converted to type datetime, rounded to week.
+#'
+#' @param data Movie data.
+#'
+#' @return Input data with converted date.
 add_week_date <- function(data) {
   data %>%
   mutate(date = as_datetime(timestamp)) %>%
@@ -568,7 +547,10 @@ avg_rating_vs_date <- edx %>%
 avg_rating_vs_date %>%
   ggplot(aes(date, rating)) +
   geom_point(alpha = 0.3) +
-  geom_smooth(method = "loess", span = 0.75, method.args = list(degree = 2))
+  geom_smooth(method = "loess", span = 0.75, method.args = list(degree = 2)) +
+  ggtitle("Average Rating Versus Date") +
+  xlab("Date") +
+  ylab("Average Rating")
 
 rm(avg_rating_vs_date)
 ```
@@ -595,8 +577,10 @@ resids <- train_set %>%
 resids %>%
   ggplot(aes(date, resids)) +
   geom_point(alpha=0.3) +
-  #geom_smooth(method = "loess", span = 0.10, method.args = list(degree = 2))
-  geom_smooth()
+  geom_smooth() +
+  ggtitle("Residual Versus Date") +
+  xlab("Date") +
+  ylab("Residual")
 ```
 
 After removal of the movie and user effects, it can be seen that over time there is not that much variation and only small improvement is expected from the $f$ term. The line is produced by `geom_smooth()`, which is using loess with a span value of 0.75, and doesn't fit the data very well. Using a span of 0.1 and degree of 2 produces the following:
@@ -605,7 +589,10 @@ After removal of the movie and user effects, it can be seen that over time there
 resids %>%
   ggplot(aes(date, resids)) +
   geom_point(alpha=0.3) +
-  geom_smooth(method = "loess", span = 0.10, method.args = list(degree = 2))
+  geom_smooth(method = "loess", span = 0.10, method.args = list(degree = 2)) +
+  ggtitle("Residual Versus Date Closer Fit") +
+  xlab("Date") +
+  ylab("Residual")
 
 rm(resids)
 ```
@@ -672,14 +659,15 @@ rmse_results <- bind_rows(rmse_results,
 rm(model, predicted_ratings)
 ```
 
-Using loess for $f$, the resulting RMSE value is `r rmse_time_effect`, which is only a very small improvement on the base regularized movie and user effect model with RMSE `r rmse_reg_movie_user_effect`.
+Using loess for $f$, the resulting RMSE value is `r rmse_time_effect`, which is negligible improvement on the base regularized movie and user effect model with RMSE `r rmse_reg_movie_user_effect`.
 
 ### Movie Time Effect
 
 ```{r set-sample-size}
 sample_size <- 10^5
 ```
-Instead of examining rating against date, an alternative is to explore the relationship between age of a movie and the ratings. Approximate the release of a movie with the date it was first rated, then the age of a movie is the elapsed time between the timestamp of the rating, and the first rating timestamp. To speed up plotting, a subsample of `r sample_size` rows of the `edx` data set is used in the following.
+Instead of examining rating against date, an alternative is to explore the relationship between age of a movie and the ratings. Approximate the release of a movie with the date it was first rated, then the age of a movie is the elapsed time between the timestamp of the rating, and the first rating timestamp. To speed up plotting, a sub sample of `r sample_size` rows of the `edx` data set is used in the following.
+
 ```{r rating-vs-movie-age-plot, include = TRUE}
 small <- edx %>% sample_n(10^5)
 small <- small %>%
@@ -690,7 +678,10 @@ small <- small %>%
 
 small %>% ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
   geom_point(alpha=0.01) +
-  geom_smooth()
+  geom_smooth() +
+  ggtitle("Rating Versus Age") +
+  xlab("Age (Weeks)") +
+  ylab("Rating")
 ```
 
 From the plot it can be seen that the lower right quadrant is not as densely occupied, indicating that the older a movie is, the less low rating values it receives and there is a slight upward trend in rating. This could be explained by people being willing to watch older movies that are considered good, but there is very little interest in watching older movies that are regarded as bad.
@@ -701,7 +692,10 @@ small %>% group_by(movieId) %>%
   ungroup() %>%
   ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
   geom_point(alpha=0.01) +
-  geom_smooth()
+  geom_smooth() +
+  ggtitle("Good Movies Rating Versus Age") +
+  xlab("Age (Weeks)") +
+  ylab("Rating")
 ```
 
 ```{r bad-rating-vs-movie-age-plot, include = TRUE}
@@ -710,7 +704,10 @@ small %>% group_by(movieId) %>%
   ungroup() %>%
   ggplot(aes(as.numeric(movie_age, units="weeks"), rating)) +
   geom_point(alpha=0.01) +
-  geom_smooth()
+  geom_smooth() +
+  ggtitle("Bad Movies Rating Versus Age") +
+  xlab("Age (Weeks)") +
+  ylab("Rating")
 ```
 
 The above two plots split the data into two sets. One where the average rating of a movie is equal to or greater than 2.5, and the other below 2.5. The plot for the above average movies is similar to the first plot of all movies, while for the below average movies it is different. This indicates that more accurate predictions will likely be obtained by modelling per movie, rather than having a single function applied to all movies. The overall model is then:
@@ -816,7 +813,7 @@ rmse_results <- bind_rows(rmse_results,
 rm(model_movie_time_effect, predicted_ratings)
 ```
 
-The RMSE calculation obtained after building the model against the training set, and using it to predict against the test set is `r rmse_movie_time_effect`, which is a significant improvement over the base regulated movie and user effects model.
+The RMSE calculation obtained after building the model against the training set, and using it to predict against the test set is `r rmse_movie_time_effect`, which is an improvement over the base regulated movie and user effects model.
 
 ### User Time Effect
 
@@ -830,7 +827,10 @@ small <- small %>%
 
 small %>% ggplot(aes(as.numeric(user_age, units="weeks"), rating)) +
   geom_point(alpha=0.01) +
-  geom_smooth()
+  geom_smooth() +
+  ggtitle("Rating Versus User Rating Age") +
+  xlab("Age (Weeks)") +
+  ylab("Rating")
 ```
 
 In the above plot of rating versus user age (age being the time since the user first rated a movie, not the user's actual age), there is a slight dip after the start, before moving back to the average. As per the movie time effect, it is likely to be more accurate to model per user, rather than a trend across all users.
@@ -862,7 +862,11 @@ unique(split_movie_and_genres$genres)
 There is a special value `(no genres listed)`, which indicates a movie has no genres. There is only one movie with this value:
 
 ```{r no-genre-movie, include = TRUE}
-edx %>% filter(genres == "(no genres listed)") %>% unique() %>% select(movieId, title, genres) %>% unique() %>% kable()
+edx %>% filter(genres == "(no genres listed)") %>%
+  unique() %>%
+  select(movieId, title, genres) %>%
+  unique() %>%
+  kable(caption = "Movies With No Genres")
 ```
 
 A histogram plot of genres shows comedies and dramas as the most popular genres.
@@ -875,14 +879,17 @@ split_movie_and_genres %>%
   mutate(genres = reorder(genres, -n)) %>%
   ggplot(aes(genres)) +
   geom_histogram(stat="count") +
-  theme(axis.text.x = element_text(angle = 90))
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Movie Genre Histogram") +
+  xlab("Genre") +
+  ylab("Count")
 
 rm(movie_and_genres, split_movie_and_genres)
 ```
 
-Is there any relationship between genre and rating? The following box plot is based on a subsample of 1 million rows from the `edx` data set.
+Is there any relationship between genre and rating? The following box plot is based on a sub sample of 1 million rows from the `edx` data set.
 
-```{r ratings-vs-genres}
+```{r ratings-vs-genres-plot, inclue = TRUE}
 # Work on small data set.
 small <- edx %>% sample_n(10^6) %>%
   filter(genres != "(no genres listed)") %>%
@@ -892,26 +899,34 @@ small %>%
   mutate(genres = fct_reorder(genres, rating, .desc = TRUE)) %>%
   ggplot(aes(genres, rating)) +
   geom_boxplot() +
-  theme(axis.text.x = element_text(angle = 90))
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Rating By Movie Genre Boxplot") +
+  xlab("Genre") +
+  ylab("Rating")
 ```
 
 From the graph it can be seen that there is a relationship between genre and rating. Film-Noir movies tend to be rated highly, while horror movies receive more lower ratings than other genres. Unlike other genres, ratings of 0.5 or 1 aren't considered outliers for horror movies.
+
+As an alternative visualization, density plots of three genres, Horror, Action, and Film-Noir are created:
 
 ```{r ratings-density-plots, include = TRUE}
 small %>% filter(genres %in% c("Horror", "Action", "Film-Noir")) %>%
   ggplot(aes(rating, fill = genres)) +
   geom_density(alpha = 0.2) +
+  ggtitle("Rating Density Plots") +
+  xlab("Rating") +
+  ylab("Density") +
   facet_grid(genres ~ .)
 rm(small)
 ```
 
 From the density plots, Action has high proportions of ratings of 3 and 4, while Film-Noir has high ratings and very little low ratings. Horror also has ratings of 3 and 4 as the highest density, however they are not as pronounced as with the Action genre.
 
-The above plots show effects of genre aggregated across all users, however individual users have different preferences and accuracy is likely to be improved by modelling a per user genre effect. The formula for adding a user genre effect to the regularized movie and user model is (based on, but differing the formula in the course exercise):
+The above plots show effects of genre aggregated across all users, however individual users have different preferences and accuracy is likely to be improved by modelling a per user genre effect. The formula for adding a user genre effect to the regularized movie and user model is (based on, but differing from the formula in the course exercise):
 
 $$Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + \sum_{k=1}^K x_{i,k} \beta_{u,k} + \varepsilon_{u,i}$$
 
-$K$ is the set of genres, $\beta_{u,k}$ is the bias for user $u$ and genre $k$, and $x_{i,k}$ is 1 if movie $i$ belongs to genre $k$, otherwise 0. In other words, we are adding a user's genre bias to a movie only if it belongs to that genre.
+$K$ is the set of genres, $\beta_{u,k}$ is the bias for user $u$ and genre $k$, and $x_{i,k}$ is 1 if movie $i$ belongs to genre $k$, otherwise 0. In other words, we are adding a user's genre bias to a movie only if the movie belongs to that genre.
 
 Below the residual (difference between predicted value of the regularized movie and user model) is shown for a single row for user 1 and the movie Boomerang.
 
@@ -927,6 +942,8 @@ user1_data <- user1_data %>% mutate(resid = .$rating - predicted_ratings)
 user1_data %>% head(1) %>%
   select(userId, movieId, title, genres, residual = resid) %>%
   kable(caption = "Residual Movie Example")
+
+rm(model, predicted_ratings)
 ```
 
 The movie Boomerang belongs to 2 genres, and the residual needs to be apportioned between the two. One way would be to simply divide the residual equally between the 2 genres. However if the user has rated a lot of comedies, but not many romances, then it would be better to apply a weight to each genre that reflects this.
@@ -942,7 +959,7 @@ $$r_{i,u} = \sum_{k=1}^K w_{i,u,k} \beta_{i,u,k}$$
 The term $\beta_{i,u,k}$ represents the bias for genre $k$ of user $u$ for movie $i$. Then the user's bias for each genre, $\beta_{u,k}$ can be taken as the average of the values of $\beta_{i,u,k}$.
 
 ```{r genre-effect-weighted, include = TRUE}
-user1_data %>%
+user1_data_genre_bias <- user1_data %>%
   # Split genres into individual genre values.
   separate_rows(genres, sep = "\\|") %>%
   # Calculate the number of times a genre has been rated per user.
@@ -954,14 +971,23 @@ user1_data %>%
   group_by(movieId, userId) %>%
   mutate(bias = (resid * n_genre_per_user) / sum(n_genre_per_user)) %>%
   ungroup() %>%
-  head(10) %>%
-  select(title, genres, count = n_genre_per_user, residual = resid, bias) %>%
-  kable(caption = "Distribution of Residual Per Genre")
+  select(title, genres, count = n_genre_per_user, residual = resid, bias)
 
-rm(model, user1_data, predicted_ratings)
+user1_data_genre_bias %>% head(10) %>% kable(caption = "Distribution of Residual Per Genre")
+
+rm(user1_data)
 ```
 
 The above table shows a portion of the results of calculation results for user 1. User 1 has rated 9 movies in the Comedy genre, and 5 in the Romance genre, so the residual of 0.837 for the movie Boomerang is apportioned into biases where Comedy has almost twice as much as Romance. The genre biases for user 1 are then calculated as the average bias per genre.
+
+```{r comedy-biases, include = TRUE}
+user1_data_genre_bias %>% filter(genres == "Comedy") %>%
+  kable(caption = "User 1 Comedy Bias")
+user1_comedy_bias <- user1_data_genre_bias %>% filter(genres == "Comedy") %>% .$bias %>% mean()
+rm(user1_data_genre_bias)
+```
+
+The above table shows the biases for the Comedy genre for the Comedy movies rated by user 1. User one's bias for the genre Comedy is then the average of these values (`r user1_comedy_bias`).
 
 Note that computing these genre biases per user involves splitting each row into multiple rows, one per genre contained in the `genres` column, this leads to increased memory usage that is beyond the available memory of the desktop computer this report was produced on. To work around this, the training set is broken into smaller chunks for processing, rather than attempting the whole set at once.
 
@@ -1010,6 +1036,8 @@ calc_user_genre_bias <- function(data, user_ids, base_model, base_predict_func) 
 #' @param base_model Base model used to calculate predictions, from which residuals are calculated.
 #' @param base_predict_func Function that takes the base_model and movie data as input, then calculates predictions.
 #' @param num_chunks Number of chunks to break data into. 1 indicates to process whole data at once.
+#'
+#' @return Data frame with variables userId, genres, and bias.
 calc_user_genre_bias_chunked <- function(data, base_model, base_predict_func, num_chunks = 1) {
 
   # Get all user IDs in the data and split if necessary.
@@ -1096,33 +1124,6 @@ fit_model_genre_reg_movie_user <- function(train_set, num_chunks = 1) {
 #' @return Vector of predicted ratings.
 predict_genre_reg_movie_user <- function(data, model, num_chunks = 1) {
   predict_genre_base_model(data, model$base_model, predict_reg_movie_user, model$user_genre_bias, num_chunks)
-
-#  print("Predicting base model values.")
-#  preds <- predict_reg_movie_user(data, model$base_model)
-#
-#  print("Applying genre biases.")
-#
-#  # Split into desired number of chunks.
-#  chunks <- test_set %>% group_by((row_number() - 1) %/% (n() / num_chunks)) %>% nest %>% pull(data)
-#  cat("chunk:")
-#  i <- 0
-#  genre_biases <- lapply(chunks, function(chunk) {
-#    i <<- i + 1
-#    cat(" ", i)
-#
-#    # We will break apart genres into separate rows, which will increase memory usage. Before doing that
-#    # pull out only the columns we need and avoid duplicating unnecessary data.
-#    # Then join against user's genre biases, and total up per user + movie to come up with a single
-#    # genre bias value for the user's rating of the movie.
-#    chunk %>% select(userId, movieId, genres) %>%
-#      separate_rows(genres, sep = "\\|") %>%
-#      left_join(model$user_genre_bias, by = c("userId", "genres")) %>%
-#      group_by(userId, movieId) %>%
-#      summarise(bias = sum(bias, na.rm = TRUE))
-#  })
-#  genre_biases <- bind_rows(genre_biases)
-#
-#  preds + genre_biases$bias
 }
 
 cache_model_genre_effect_filename <- "rda/model_genre_effect.rds"
@@ -1209,7 +1210,7 @@ Summary table of all RMSE model values trained on `train_set` and evaluated agai
 kable(rmse_results, digits=5, caption="RMSE Results")
 ```
 
-The final model that will be trained on the `edx` set and evaluated against the `validation` set is:
+The full model that will be trained on the `edx` set and evaluated against the `validation` set is:
 
 $Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + \sum_{k=1}^K x_{i,k} \beta_{u,k} + \varepsilon_{u,i}$.
 
@@ -1249,145 +1250,196 @@ rm(model, predicted_ratings)
 ```{r final-training-validation-regularized-movie-effects}
 
 # Cross validation sets from edx set.
-cv_sets <- create_cv_sets(edx, K)
-rmses <- calc_kfold_rmses_reg_movie(cv_sets, lambdas)
-best_lambda_reg_movie = lambdas[which.min(rmses)]
+cache_final_cv_sets_filename <- "rda/final_cv_sets.rds"
+if (use_cache & file.exists(cache_final_cv_sets_filename)) {
+  final_cv_sets <- readRDS(cache_final_cv_sets_filename)
+} else {
+  final_cv_sets <- create_cv_sets(edx, K)
 
-model <- fit_model_reg_movie(edx, lambda = best_lambda_reg_movie)
+  if (use_cache) {
+    saveRDS(final_cv_sets, cache_final_cv_sets_filename)
+  }
+}
+
+cache_final_rmses_reg_movie_filename <- "rda/final_rmses_reg_movie.rds"
+if (use_cache & file.exists(cache_final_rmses_reg_movie_filename)) {
+  final_rmses <- readRDS(cache_final_rmses_reg_movie_filename)
+} else {
+  final_rmses <- calc_kfold_rmses_reg_movie(final_cv_sets, lambdas)
+
+  if (use_cache) {
+    saveRDS(final_rmses, cache_final_rmses_reg_movie_filename)
+  }
+}
+final_best_lambda_reg_movie = lambdas[which.min(final_rmses)]
+
+model <- fit_model_reg_movie(edx, lambda = final_best_lambda_reg_movie)
 predicted_ratings <- predict_reg_movie(validation, model)
 
-rmse_reg_movie_effect <- RMSE(validation$rating, predicted_ratings)
+final_rmse_reg_movie_effect <- RMSE(validation$rating, predicted_ratings)
 final_rmse_results <- bind_rows(final_rmse_results,
-                          tibble(method="Regularized Movie Effect Model", RMSE=rmse_reg_movie_effect))
+                                tibble(method="Regularized Movie Effect Model", RMSE=final_rmse_reg_movie_effect))
 rm(model, predicted_ratings)
 ```
 
 ```{r final-training-validation-reg-movie-user-effects}
-rmses <- calc_kfold_rmses_reg_movie_user(cv_sets, lambdas)
-best_lambda_reg_movie_user <- lambdas[which.min(rmses)]
+cache_final_rmses_reg_movie_user_filename <- "rda/final_rmses_reg_movie_user.rds"
+if (use_cache & file.exists(cache_final_rmses_reg_movie_user_filename)) {
+  final_rmses <- readRDS(cache_final_rmses_reg_movie_user_filename)
+} else {
+  final_rmses <- calc_kfold_rmses_reg_movie_user(final_cv_sets, lambdas)
 
-model <- fit_model_reg_movie_user(edx, lambda = best_lambda_reg_movie_user)
+  if (use_cache) {
+    saveRDS(final_rmses, cache_final_rmses_reg_movie_user_filename)
+  }
+}
+#final_rmses <- calc_kfold_rmses_reg_movie_user(final_cv_sets, lambdas)
+final_best_lambda_reg_movie_user <- lambdas[which.min(final_rmses)]
+
+model <- fit_model_reg_movie_user(edx, lambda = final_best_lambda_reg_movie_user)
 predicted_ratings <- predict_reg_movie_user(validation, model)
 
-rmse_reg_movie_user_effect <- RMSE(validation$rating, predicted_ratings)
-final_rmse_results <- bind_rows(final_rmse_results, tibble(method="Regularized Movie + User Effect Model", RMSE=rmse_reg_movie_user_effect))
+final_rmse_reg_movie_user_effect <- RMSE(validation$rating, predicted_ratings)
+final_rmse_results <- bind_rows(final_rmse_results,
+                                tibble(method="Regularized Movie + User Effect Model",
+                                       RMSE=final_rmse_reg_movie_user_effect))
 
 rm(model, predicted_ratings)
 
 # No further need for cross validation sets, so remove to free up memory.
-rm(cv_sets)
+rm(final_cv_sets)
 ```
 
 ```{r final-training-validation-avg-rating-vs-week}
 model <- fit_model_time_effect(edx)
 predicted_ratings <- predict_time_effect(validation, model)
 
-rmse_time_effect <- RMSE(validation$rating, predicted_ratings)
+final_rmse_time_effect <- RMSE(validation$rating, predicted_ratings)
 final_rmse_results <- bind_rows(final_rmse_results,
-                          tibble(method="Regularized Movie + User Effect + Time Effect Model",
-                                 RMSE=rmse_time_effect))
+                                tibble(method="Regularized Movie + User Effect + Week Time Effect Model",
+                                       RMSE=final_rmse_time_effect))
 rm(model, predicted_ratings)
 ```
 
 ```{r final-training-validation-movie-time-effect}
-cache_edx_model_movie_time_effect_filename <- "rda/edx_model_movie_time_effect.rds"
-if (use_cache & file.exists(cache_edx_model_movie_time_effect_filename)) {
-  model_movie_time_effect <- readRDS(cache_edx_model_movie_time_effect_filename)
+cache_final_model_movie_time_effect_filename <- "rda/final_model_movie_time_effect.rds"
+if (use_cache & file.exists(cache_final_model_movie_time_effect_filename)) {
+  model_movie_time_effect <- readRDS(cache_final_model_movie_time_effect_filename)
 } else {
   model_movie_time_effect <- fit_model_movie_time_effect(edx)
 
   if (use_cache) {
-    saveRDS(model_movie_time_effect, cache_edx_model_movie_time_effect_filename)
+    saveRDS(model_movie_time_effect, cache_final_model_movie_time_effect_filename)
   }
 }
 predicted_ratings <- predict_movie_time_effect(validation, model_movie_time_effect)
 
-rmse_movie_time_effect <- RMSE(validation$rating, predicted_ratings)
+final_rmse_movie_time_effect <- RMSE(validation$rating, predicted_ratings)
 final_rmse_results <- bind_rows(final_rmse_results,
-                          tibble(method="Regularized Movie + User Effect + Movie Time Effect Model",
-                                 RMSE=rmse_movie_time_effect))
+                                tibble(method="Regularized Movie + User Effect + Movie Time Effect Model",
+                                       RMSE=final_rmse_movie_time_effect))
 rm(model_movie_time_effect, predicted_ratings)
 ```
 
 ```{r final-training-validation-genre-effect}
-cache_edx_model_genre_effect_filename <- "rda/edx_model_genre_effect.rds"
-if (use_cache & file.exists(cache_edx_model_genre_effect_filename)) {
-  model_genre_effect <- readRDS(cache_edx_model_genre_effect_filename)
+cache_final_model_genre_effect_filename <- "rda/final_model_genre_effect.rds"
+if (use_cache & file.exists(cache_final_model_genre_effect_filename)) {
+  model_genre_effect <- readRDS(cache_final_model_genre_effect_filename)
 } else {
   model_genre_effect <- fit_model_genre_reg_movie_user(edx, 5)
 
   if (use_cache) {
-    saveRDS(model_genre_effect, cache_edx_model_genre_effect_filename)
+    saveRDS(model_genre_effect, cache_final_model_genre_effect_filename)
   }
 }
 predicted_ratings <- predict_genre_reg_movie_user(validation, model_genre_effect, 5)
 
-rmse_genre_effect <- RMSE(validation$rating, predicted_ratings)
+final_rmse_genre_effect <- RMSE(validation$rating, predicted_ratings)
 final_rmse_results <- bind_rows(final_rmse_results,
-                          tibble(method="Regularized Movie + User Effect + Genre Effect Model",
-                                 RMSE=rmse_genre_effect))
+                                tibble(method="Regularized Movie + User Effect + Genre Effect Model",
+                                       RMSE=final_rmse_genre_effect))
 rm(model_genre_effect, predicted_ratings)
 ```
 
 ```{r final-training-validation-full}
 
-cache_edx_model_full_filename <- "rda/edx_model_full.rds"
-if (use_cache & file.exists(cache_edx_model_full_filename)) {
-  model_full <- readRDS(cache_edx_model_full_filename)
+cache_final_model_full_filename <- "rda/final_model_full.rds"
+if (use_cache & file.exists(cache_final_model_full_filename)) {
+  model_full <- readRDS(cache_final_model_full_filename)
 } else {
   model_full <- fit_model_full(edx, 5)
 
   if (use_cache) {
-    saveRDS(model_full, cache_edx_model_full_filename)
+    saveRDS(model_full, cache_final_model_full_filename)
   }
 }
 predicted_ratings <- predict_full(validation, model_full, 5)
 
-rmse_full <- RMSE(validation$rating, predicted_ratings)
+final_rmse_full <- RMSE(validation$rating, predicted_ratings)
 final_rmse_results <- bind_rows(final_rmse_results,
-                          tibble(method="Regularized Movie + User Effect + Movie Time Effect + Genre Effect Model",
-                                 RMSE=rmse_full))
+                                tibble(method="Regularized Movie + User Effect + Movie Time Effect + Genre Effect Model",
+                                       RMSE=final_rmse_full))
 rm(model_full, predicted_ratings)
 ```
 
 # Results
 
-The table below shows the results of training the various models against the full `edx` set, and then predicting against the `validation` set.
+The table below shows the results of training the various models against the full `edx` set, and then predicting against the `validation` set. The results are similar to those obtained against the training and test sets when developing the models, indicating the models were not over fitted and generalized to data not seen (the `validation` set).
 
 ```{r final-results, include = TRUE}
 kable(final_rmse_results, digits=5, caption="Validation RMSE Results")
 ```
 
-* reg movie effect, best lambda is ???
+## Course Models
 
-* Average of 3.5 stars, rather than 2.5 could be explained by users viewing and rating movies they expect to like, rather than watching movies they don't expect to enjoy.
+### Just The Average
 
-* Arbitrary min value of 100 on number of reviews for the movie effect, could be tuned.
+Worst performance with a RMSE value of `r final_rmse_naive`. The average rating across all movies is `r mean(edx$rating)` which indicates a user bias towards viewing and rating movies that they will like.
 
-* Could use other algorithms for modelling, e.g. knn and examine accuracy.
+### Movie Effect
+
+RMSE of `r final_rmse_movie_effect` performs better than just the average of all movies. It represents the idea that some movies are widely regarded as "good", "bad" etc.
+
+### Movie And User Effect
+
+Improvement on the movie effect model with a RMSE of `r final_rmse_movie_user_effect`, representing the idea that users have different standards when rating. Some users may be very critical and consistently give low ratings, others may be the opposite.
+
+### Regularized Movie Effect Model.
+
+The regularization penalty term was calculated using k-fold cross validation with a value of `r final_best_lambda_reg_movie`, which lead to only a slight improvement over the non-regularized version, `r final_rmse_reg_movie_effect` versus `r final_rmse_movie_effect`.
+
+### Regularized Movie and User Effects Model
+
+Using cross validation, the best $\lambda$ value was `r final_best_lambda_reg_movie_user`. Regularization has somewhat of an improvement over the non-regularized version, `r final_rmse_reg_movie_user_effect` versus  `r final_rmse_movie_user_effect`. But it is not as large of an improvement obtained by adding another bias term to the model.
+
+## New Models
+
+The regularized movie and user effects model is the best performing course model, the new models developed used this as a basis to build upon.
+
+### Week Time Effect Model
+
+A bias was added for modeling the effect of rating date (at a resolution of a week), and there was no significant change from the base model results. This indicates the date of a review, by itself, has no predictive power.
+
+### Movie Time Effect Model.
+
+A term representing the movie effect over time was added, by fitting loess models per movie. An improved RMSE value of `r final_rmse_movie_time_effect` was obtained compared to the base model value of `r final_rmse_reg_movie_user_effect`. Generally, "good" movies will receive positive ratings long after they are first released as users will be attracted to watching older "good" movies, while "bad" movies will not attract any ratings the older they are.
+
+### Genres Model
+
+The bias of individual users towards different genres was modeled, and the resulting RMSE of `r final_rmse_genre_effect` was a significant improvement over the base model value of `r final_rmse_reg_movie_user_effect`. Movie genre has strong predictive power on an individual user basis.
+
+### Full Model
+
+The full model (base model with genre and movie time effects) gave the best RMSE value of `r final_rmse_full`. The largest components contributing to this are the regularized movie and user effects. These present an improvement of approximately `r abs(round(final_rmse_reg_movie_user_effect - final_rmse_naive, 3))` over just taking the average rating. The user genre effect is the next largest contributing roughly `r abs(round(final_rmse_genre_effect - final_rmse_reg_movie_user_effect, 3))` improvement, followed by the movie time effect `r abs(round(final_rmse_movie_time_effect - final_rmse_reg_movie_user_effect, 3))`.
 
 # Conclusion
 
-# Appendix
-## Generation of Training and Validation Sets
-```{r data-generation-code}
-## Including Plots
+In this report, the movie recommendation system introduced in **PH125.8x: Data Science: Machine Learning** was improved upon by adding further terms that incorporated more features available in the MovieLens data set. After exploring the data, two further terms were added to form a new model:
 
-##```{r load-kableExtra, include = FALSE}
-##if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
-##library(kableExtra)
-##```
-##```{r course-models, echo = FALSE}
-##df <- data.frame(
-##  Formula=c("$Y_{u,i} = \\mu + \\varepsilon_{u,i}$"),
-##  Description=c("Rating by user $u$ for movie $i$ is the mean of all movie ratings."))
-###kable(df, format = "latex")
-##kable(df)
-##rm(df)
-##```
-##```{r unload-kableExtra, include = FALSE}
-### kableExtra hides some dplr functions, so unload it.
-##detach("package:kableExtra", unload=TRUE)
-##```
-##The $\epsilon_{u,1}$ term represents independent errors sampled from the same distribution centered at zero.
-```
+$$Y_{u,i} = \mu + b_{i}(\lambda) + b_{u}(\lambda) + f_{i}(d_{u,i}) + \sum_{k=1}^K x_{i,k} \beta_{u,k} + \varepsilon_{u,i}$$
+
+One term represents the effect of time on movie bias, and was modeled using loess. The other term was for representing individual user biases towards movie genres. A final RMSE value of `r final_rmse_full` was obtained by training on the `edx` set and evaluating against the `validation` set.
+
+An attempt was made to model the effect of time on user bias, however the memory requirements were beyond the available memory of the desktop PC used to develop this report. With more powerful hardware, this could possibly be explored. Further techniques could also be tried with better hardware, such as matrix factorization.
+
+In fitting loess models for movie bias over time, an arbitrary value of 100 was used as a cut off point. Movies with less than this number of data points didn't have a loess model fitted. This is a value that could be tuned to obtain an optimal value. Models other than loess could also be explored for modelling biases over time.
