@@ -290,6 +290,7 @@ $n_i$ is the number of ratings of movie $i$. The optimal value for $\lambda$ is 
 #' Fit regularized movie effects model.
 #'
 #' @param train_set Movie data to train on.
+#' @param lambda Penalty value to apply for regularization.
 #'
 #' @return Model consisting of value "mu" and frame "b_i" effects per movie.
 fit_model_reg_movie <- function(train_set, lambda) {
@@ -374,7 +375,7 @@ calc_kfold_rmses <- function(cv_sets, lambdas, func) {
 #' @param lambdas Vector of lambda values to apply.
 #'
 #' @return Mean RMSE for each lambda value.
-calc_kfold_rmses_reg_movie <- function(cv_sets, lamdas) {
+calc_kfold_rmses_reg_movie <- function(cv_sets, lambdas) {
   calc_kfold_rmses(cv_sets, lambdas, function(test_set, train_set) {
     sapply(lambdas, function(lambda) {
       model <- fit_model_reg_movie(train_set, lambda)
@@ -396,7 +397,7 @@ if (use_cache & file.exists(cache_rmses_reg_movie_filename)) {
 }
 best_lambda_reg_movie = lambdas[which.min(rmses)]
 
-model <- fit_model_reg_movie(train_set, lambda = best_lambda_reg_movie)
+model <- fit_model_reg_movie(train_set, best_lambda_reg_movie)
 predicted_ratings <- predict_reg_movie(test_set, model)
 
 rmse_reg_movie_effect <- RMSE(test_set$rating, predicted_ratings)
@@ -432,7 +433,7 @@ In a similar manner to the regularized movie effect model, the user bias can als
 #' @param lambda Penalty value to apply for regularization.
 #'
 #' @return Model consisting of value "mu", frame "b_i" effects per movie, and frame "b_u" effects per user.
-fit_model_reg_movie_user <- function(train_set, lambda = 0) {
+fit_model_reg_movie_user <- function(train_set, lambda) {
   mu <- mean(train_set$rating)
   b_i <- train_set %>%
     group_by(movieId) %>%
@@ -490,7 +491,7 @@ if (use_cache & file.exists(cache_rmses_reg_movie_user_filename)) {
 best_lambda <- lambdas[which.min(rmses)]
 best_lambda_reg_movie_user <- best_lambda
 
-model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
+model <- fit_model_reg_movie_user(train_set, best_lambda_reg_movie_user)
 predicted_ratings <- predict_reg_movie_user(test_set, model)
 
 rmse_reg_movie_user_effect <- RMSE(test_set$rating, predicted_ratings)
@@ -602,10 +603,11 @@ rm(resids)
 #' Fit regularized movie and user effects model, with time effect component.
 #'
 #' @param train_set Movie data to train on.
+#' @param lambda Penalty to apply for regularization
 #'
 #' @return Model consisting of value "base_model" (regularized movie and user effect model), and
 #'  object "loess_model" for time effect.
-fit_model_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user, span = 0.10) {
+fit_model_time_effect <- function(train_set, lambda, span = 0.10) {
   model <- fit_model_reg_movie_user(train_set, lambda)
 
   # Calculate residuals i.e. values after removing mu, movie and user effects.
@@ -649,7 +651,7 @@ predict_time_effect <- function(data, model) {
     pull(pred)
 }
 
-model <- fit_model_time_effect(train_set)
+model <- fit_model_time_effect(train_set, best_lambda_reg_movie_user)
 predicted_ratings <- predict_time_effect(test_set, model)
 
 rmse_time_effect <- RMSE(test_set$rating, predicted_ratings)
@@ -725,7 +727,7 @@ The steps involve converting the training data timestamp to `datetime` type, rou
 #'
 #' @return Model consisting of value "base_model" (regularized movie and user effect model), and
 #'  object "loess_models" for movie time effect.
-fit_model_movie_time_effect <- function(train_set, lambda = best_lambda_reg_movie_user) {
+fit_model_movie_time_effect <- function(train_set, lambda) {
   model <- fit_model_reg_movie_user(train_set, lambda)
 
   # Calculate residuals i.e. values after removing mu, movie and user effects.
@@ -798,7 +800,7 @@ cache_model_movie_time_effect_filename <- "rda/model_movie_time_effect.rds"
 if (use_cache & file.exists(cache_model_movie_time_effect_filename)) {
   model_movie_time_effect <- readRDS(cache_model_movie_time_effect_filename)
 } else {
-  model_movie_time_effect <- fit_model_movie_time_effect(train_set)
+  model_movie_time_effect <- fit_model_movie_time_effect(train_set, best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_movie_time_effect, cache_model_movie_time_effect_filename)
@@ -1101,13 +1103,14 @@ predict_genre_base_model <- function(data, base_model, base_predict_func, user_g
 #'
 #' @param train_set Movie data.
 #' @param num_chunks To reduce memory requirements, perform calculations on chunks of data. A value of 1 indictes no split.
+#' @param lambda Penalty value to apply for regularization.
 #'
 #' @return Model consisting of value "base_model" (regularized movie and user effect model), and
 #'  frame "user_genre_bias".
-fit_model_genre_reg_movie_user <- function(train_set, num_chunks = 1) {
+fit_model_genre_reg_movie_user <- function(train_set, num_chunks, lambda) {
 
   print("Fitting base model.")
-  base_model <- fit_model_reg_movie_user(train_set, lambda = best_lambda_reg_movie_user)
+  base_model <- fit_model_reg_movie_user(train_set, lambda)
 
   print("Generating user-genre biases.")
   user_genre_bias <- calc_user_genre_bias_chunked(train_set, base_model, predict_reg_movie_user, num_chunks)
@@ -1130,7 +1133,7 @@ cache_model_genre_effect_filename <- "rda/model_genre_effect.rds"
 if (use_cache & file.exists(cache_model_genre_effect_filename)) {
   model_genre_effect <- readRDS(cache_model_genre_effect_filename)
 } else {
-  model_genre_effect <- fit_model_genre_reg_movie_user(train_set, 5)
+  model_genre_effect <- fit_model_genre_reg_movie_user(train_set, 5, best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_genre_effect, cache_model_genre_effect_filename)
@@ -1159,13 +1162,14 @@ The full model is based on the regularized movie and user effects, with a term a
 #'
 #' @param train_set Movie data.
 #' @param num_chunks To reduce memory requirements, perform calculations on chunks of data. A value of 1 indictes no split.
+#' @param lambda Penalty value to apply for regularization.
 #'
 #' @return Model consisting of value "base_model" (regularized movie and user effect model), and
 #'  frame "user_genre_bias".
-fit_model_full <- function(train_set, num_chunks = 1) {
+fit_model_full <- function(train_set, num_chunks, lambda) {
 
   print("Fitting base model.")
-  base_model <- fit_model_movie_time_effect(train_set, lambda = best_lambda_reg_movie_user)
+  base_model <- fit_model_movie_time_effect(train_set, lambda)
 
   print("Generating user-genre biases.")
   user_genre_bias <- calc_user_genre_bias_chunked(train_set, base_model, predict_movie_time_effect, num_chunks)
@@ -1188,7 +1192,7 @@ cache_model_full_filename <- "rda/model_full.rds"
 if (use_cache & file.exists(cache_model_full_filename)) {
   model_full <- readRDS(cache_model_full_filename)
 } else {
-  model_full <- fit_model_full(train_set, 5)
+  model_full <- fit_model_full(train_set, 5, best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_full, cache_model_full_filename)
@@ -1273,7 +1277,7 @@ if (use_cache & file.exists(cache_final_rmses_reg_movie_filename)) {
 }
 final_best_lambda_reg_movie = lambdas[which.min(final_rmses)]
 
-model <- fit_model_reg_movie(edx, lambda = final_best_lambda_reg_movie)
+model <- fit_model_reg_movie(edx, final_best_lambda_reg_movie)
 predicted_ratings <- predict_reg_movie(validation, model)
 
 final_rmse_reg_movie_effect <- RMSE(validation$rating, predicted_ratings)
@@ -1293,10 +1297,9 @@ if (use_cache & file.exists(cache_final_rmses_reg_movie_user_filename)) {
     saveRDS(final_rmses, cache_final_rmses_reg_movie_user_filename)
   }
 }
-#final_rmses <- calc_kfold_rmses_reg_movie_user(final_cv_sets, lambdas)
 final_best_lambda_reg_movie_user <- lambdas[which.min(final_rmses)]
 
-model <- fit_model_reg_movie_user(edx, lambda = final_best_lambda_reg_movie_user)
+model <- fit_model_reg_movie_user(edx, final_best_lambda_reg_movie_user)
 predicted_ratings <- predict_reg_movie_user(validation, model)
 
 final_rmse_reg_movie_user_effect <- RMSE(validation$rating, predicted_ratings)
@@ -1311,7 +1314,7 @@ rm(final_cv_sets)
 ```
 
 ```{r final-training-validation-avg-rating-vs-week}
-model <- fit_model_time_effect(edx)
+model <- fit_model_time_effect(edx, final_best_lambda_reg_movie_user)
 predicted_ratings <- predict_time_effect(validation, model)
 
 final_rmse_time_effect <- RMSE(validation$rating, predicted_ratings)
@@ -1326,7 +1329,7 @@ cache_final_model_movie_time_effect_filename <- "rda/final_model_movie_time_effe
 if (use_cache & file.exists(cache_final_model_movie_time_effect_filename)) {
   model_movie_time_effect <- readRDS(cache_final_model_movie_time_effect_filename)
 } else {
-  model_movie_time_effect <- fit_model_movie_time_effect(edx)
+  model_movie_time_effect <- fit_model_movie_time_effect(edx, final_best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_movie_time_effect, cache_final_model_movie_time_effect_filename)
@@ -1346,7 +1349,7 @@ cache_final_model_genre_effect_filename <- "rda/final_model_genre_effect.rds"
 if (use_cache & file.exists(cache_final_model_genre_effect_filename)) {
   model_genre_effect <- readRDS(cache_final_model_genre_effect_filename)
 } else {
-  model_genre_effect <- fit_model_genre_reg_movie_user(edx, 5)
+  model_genre_effect <- fit_model_genre_reg_movie_user(edx, 5, final_best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_genre_effect, cache_final_model_genre_effect_filename)
@@ -1367,7 +1370,7 @@ cache_final_model_full_filename <- "rda/final_model_full.rds"
 if (use_cache & file.exists(cache_final_model_full_filename)) {
   model_full <- readRDS(cache_final_model_full_filename)
 } else {
-  model_full <- fit_model_full(edx, 5)
+  model_full <- fit_model_full(edx, 5, final_best_lambda_reg_movie_user)
 
   if (use_cache) {
     saveRDS(model_full, cache_final_model_full_filename)
